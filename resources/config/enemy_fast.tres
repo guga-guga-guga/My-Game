@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="EnemyConfig" format=3 uid="uid://cgtf0hu0ygymh"]
+
+[ext_resource type="SpriteFrames" uid="uid://cblyu0p0pgs40" path="res://resources/animation/enemy_fast.tres" id="1_ko5in"]
+[ext_resource type="Script" uid="uid://bccoqr6gebhb0" path="res://resources/config/pickup_config.gd" id="2_ebpf3"]
+[ext_resource type="Resource" uid="uid://bqm81rsnqj74v" path="res://resources/config/pickup_speed.tres" id="3_neduf"]
+[ext_resource type="Script" uid="uid://3f1enb745uiq" path="res://resources/config/enemy_config.gd" id="4_jidkc"]
+
+[resource]
+script = ExtResource("4_jidkc")
+enemy_type = 2
+display_name = "快速敌人"
+max_health = 2
+move_speed = 30.0
+enemy_frames = ExtResource("1_ko5in")
+pickup_drop_chance = 0.5
+pickup_drop_configs = Array[ExtResource("2_ebpf3")]([ExtResource("3_neduf")])
+metadata/_custom_type_script = "uid://3f1enb745uiq"
