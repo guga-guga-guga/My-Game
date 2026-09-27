@@ -1,5 +1,4 @@
 extends CanvasLayer
-## 关卡之间的汇报（M4-7）：打完一关回到 Hub 时弹一次「上一关成绩 + 本层通讯」。
 ## 纯代码构建。操作和对话框/商店一致：E 或回车关闭（ESC 也行）。
 ## 数据由 Battle 在离场时写进 RunState.last_level_report。
 
@@ -7,29 +6,14 @@ signal closed
 
 const TITLE_FONT_SIZE := 30
 const BODY_FONT_SIZE := 26
-const STORY_FONT_SIZE := 24
 const HINT_FONT_SIZE := 20
 const PANEL_MARGIN_X := 180.0
 const PANEL_TOP := 70.0
 
-## 每层一段通讯，按"即将打的这一层"取
-const STORY_LINES := {
-	1: "通讯: 前方是本层的第一个关卡 先熟悉一下敌人的走位",
-	2: "通讯: 敌人开始成队出现 别被围在墙角",
-	3: "通讯: 侦察到带壳的重甲目标 打不动就绕开它",
-	4: "通讯: 这一带走廊很窄 别把自己逼进死路",
-	5: "通讯: 前面就是本层 BOSS 左右各有一个补给点 先把钱花掉",
-	6: "通讯: 你已经打穿了第一道防线 后面的火力更猛",
-	7: "通讯: 敌人开始成群结队 保持移动别停下",
-	8: "通讯: 再往前是核心区 把状态补满再进",
-	9: "通讯: 最后一段路 撑住",
-	10: "通讯: 最终 BOSS 就在前面 打完这一场就结束了",
-}
 
 var _panel: PanelContainer = null
 var _title: Label = null
 var _body: Label = null
-var _story: Label = null
 var _hint: Label = null
 var _open := false
 var _open_frame := -1
@@ -77,11 +61,6 @@ func _build_ui() -> void:
 	_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_body)
 
-	_story = Label.new()
-	_story.add_theme_font_size_override("font_size", STORY_FONT_SIZE)
-	_story.add_theme_color_override("font_color", Color(0.80, 0.92, 0.85))
-	_story.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(_story)
 
 	_hint = Label.new()
 	_hint.text = "E 继续"
@@ -99,7 +78,6 @@ func show_report(report: Dictionary, current_floor: int) -> void:
 	_open_frame = Engine.get_process_frames()
 	_title.text = "第 %d 层 汇报" % current_floor
 	_body.text = _build_body(report)
-	_story.text = String(STORY_LINES.get(current_floor, "通讯: 继续前进"))
 	visible = true
 
 
@@ -133,7 +111,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		viewport.set_input_as_handled()
 
 
-
 func _close() -> void:
 	if not _open:
 		return
@@ -150,10 +127,6 @@ func debug_body() -> String:
 
 func debug_title() -> String:
 	return _title.text
-
-
-func debug_story() -> String:
-	return _story.text
 
 
 func debug_close() -> void:
