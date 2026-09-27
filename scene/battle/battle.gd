@@ -64,7 +64,8 @@ func _ready() -> void:
 	# ② 场地数据 到 ③ 铺瓦片 红门在 Overlay 层 到 ④ 出怪点与红门成对创建
 	var use_seed := arena_seed if arena_seed != 0 else random_generator.randi()
 	var generator = ArenaGen.new()
-	arena_data = generator.generate(arena_width, arena_height, use_seed)
+	var arena_mode := ArenaGen.MODE_BOSS if goal["type"] == LevelGoal.TYPE_BOSS else ArenaGen.MODE_NORMAL
+	arena_data = generator.generate(arena_width, arena_height, use_seed, arena_mode)
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
 	player.global_position = cell_to_world(arena_data["player_spawn"])
