@@ -28,6 +28,7 @@ var npcs: Array = []
 var _player: Player = null
 var _dialogue = null
 var _active_npc = null
+var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"，加冷却避免立刻重开
 
 
 func _ready() -> void:
@@ -176,10 +177,12 @@ func _setup_dialogue() -> void:
 	_dialogue.closed.connect(_on_dialogue_closed)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if _interact_lock > 0.0:
+		_interact_lock -= delta
 	if _dialogue != null and _dialogue.is_open():
 		return
-	if Input.is_action_just_pressed("interact"):
+	if _interact_lock <= 0.0 and Input.is_action_just_pressed("interact"):
 		var npc = _nearest_npc_in_range()
 		if npc != null:
 			_open_npc_dialogue(npc)
@@ -226,6 +229,7 @@ func _on_dialogue_closed() -> void:
 	if _player != null:
 		_player.set_physics_process(true)
 	_active_npc = null
+	_interact_lock = 0.25
 
 ## 调试链：0.6 秒后对第一个角色开对话，1.4 秒后自动选「进入」
 func _start_debug_dialogue_test() -> void:
@@ -250,5 +254,6 @@ func _debug_open_first_npc() -> void:
 
 
 func _debug_pick_enter() -> void:
-	print("[Hub] 调试: 自动选择第一个选项（进入）")
-	_on_dialogue_option(0)
+	print("[Hub] 调试: 自动按一次 E（等价于确认当前选项）")
+	if _dialogue != null:
+		_dialogue.debug_confirm()
