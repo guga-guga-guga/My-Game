@@ -67,26 +67,33 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 	grid.resize(w * h)
 	grid.fill(CELL_WALL)
 
-	# 房间
-	var rooms: Array[Rect2i] = []
+	# 房间：把可玩区域切成 cols x rows 个分区，每个分区里随机放一间房。
+	# （纯随机撒点会让房间扎堆、留下大片实心墙；分区撒点地形更均匀、更像原关卡）
 	var room_count := clampi(3 + int(w * h / 240.0), 3, 6)
-	for _i in range(room_count * 6):
-		if rooms.size() >= room_count:
-			break
-		var rw := rng.randi_range(5, 9)
-		var rh := rng.randi_range(4, 7)
-		if rw + 2 >= w or rh + 2 >= h:
-			continue
-		var candidate := Rect2i(rng.randi_range(1, w - rw - 2), rng.randi_range(1, h - rh - 2), rw, rh)
-		var overlaps := false
-		for room in rooms:
-			if candidate.grow(1).intersects(room):
-				overlaps = true
+	var cols := 2
+	var rows := clampi(int(ceil(float(room_count) / 2.0)), 2, 3)
+	var part_w := int(floor(float(w) / float(cols)))
+	var part_h := int(floor(float(h) / float(rows)))
+	var rooms: Array[Rect2i] = []
+	for j in range(rows):
+		for i in range(cols):
+			if rooms.size() >= room_count:
 				break
-		if overlaps:
-			continue
-		rooms.append(candidate)
-		_carve_rect(grid, w, candidate)
+			var max_rw := mini(9, part_w - 2)
+			var max_rh := mini(7, part_h - 2)
+			if max_rw < 5 or max_rh < 4:
+				continue
+			var rw := rng.randi_range(5, max_rw)
+			var rh := rng.randi_range(4, max_rh)
+			var x0 := i * part_w + 1
+			var y0 := j * part_h + 1
+			var x1 := mini(x0 + (part_w - rw - 1), w - rw - 2)
+			var y1 := mini(y0 + (part_h - rh - 1), h - rh - 2)
+			var candidate := Rect2i(
+				clampi(rng.randi_range(x0, maxi(x0, x1)), 1, w - rw - 2),
+				clampi(rng.randi_range(y0, maxi(y0, y1)), 1, h - rh - 2), rw, rh)
+			rooms.append(candidate)
+			_carve_rect(grid, w, candidate)
 	if rooms.size() < 2:
 		return {"ok": false, "reason": "房间数不足(%d)" % rooms.size()}
 
@@ -323,6 +330,11 @@ func apply_to_layers(ground: TileMapLayer, overlay: TileMapLayer, data: Dictiona
 				ground.set_cell(cell, EDGE_SOURCE, EDGE_TILES[absi(x * 5 + y * 11) % EDGE_TILES.size()])
 	for door in data["doors"]:
 		overlay.set_cell(door["cell"], DOOR_SOURCE, DOOR_TILE)
+		# 上下边的门开口是"横向 2 格"，而门贴图是 16x32（竖着盖 2 行），
+		# 所以需要并排再补一块才能盖住整个开口；左右边的门贴图本身就够高，一块即可。
+		var step: Vector2i = door.get("step", Vector2i.ZERO)
+		if step.x != 0:
+			overlay.set_cell(door["cell"] + step, DOOR_SOURCE, DOOR_TILE)
 
 
 ## 出怪点世界坐标 = 红门 1x2 格的中心（贴图 16x32 正好覆盖这两格）
@@ -335,8 +347,11 @@ func spawn_world_position(door: Dictionary) -> Vector2:
 
 ## 在指定父节点下按生成结果重建出怪 Marker（先清掉旧的），并返回它们。
 func create_spawn_markers(parent: Node2D, data: Dictionary) -> Array[Marker2D]:
+	# 必须"立即"释放：queue_free() 是延迟到帧末的，会让同一帧的 _collect_enemy_spawn_points()
+	# 同时收下旧 Marker 和新 Marker，导致敌人从旧位置刷出
 	for child in parent.get_children():
-		child.queue_free()
+		parent.remove_child(child)
+		child.free()
 	var markers: Array[Marker2D] = []
 	for door in data["doors"]:
 		var marker := Marker2D.new()
@@ -383,7 +398,7 @@ func _carve_rect(grid: Array, w: int, rect: Rect2i) -> void:
 
 
 func _carve_h_line(grid: Array, w: int, x0: int, x1: int, y: int) -> void:
-	var h := int(grid.size() / w)
+	var h := int(floor(float(grid.size()) / float(w)))
 	for x in range(mini(x0, x1), maxi(x0, x1) + 1):
 		grid[y * w + x] = CELL_FLOOR
 		if y + 1 < h:
@@ -392,6 +407,8 @@ func _carve_h_line(grid: Array, w: int, x0: int, x1: int, y: int) -> void:
 
 func _carve_v_line(grid: Array, w: int, h: int, y0: int, y1: int, x: int) -> void:
 	for y in range(mini(y0, y1), maxi(y0, y1) + 1):
+		if y < 0 or y >= h or x < 0 or x >= w:
+			continue
 		grid[y * w + x] = CELL_FLOOR
 		if x + 1 < w:
 			grid[y * w + x + 1] = CELL_FLOOR
