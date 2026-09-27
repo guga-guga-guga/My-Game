@@ -1,9 +1,9 @@
 extends Control
-## 爬塔路线图（M0 骨架版）—— Autoload 名：无，由 GameFlow 切进来。
+## 爬塔路线图 M0 骨架版 —— Autoload 名:无，由 GameFlow 切进来
 ##
-## M0 目标：跑通 title → MapScreen →（战斗）→ MapScreen 的流程，并验证层数/金币能跨场景保留。
-## M3 会把 DEMO_NODES 换成 RunMap 生成的随机路线图，并让节点类型决定关卡目标。
-## UI 全部由代码生成（沿用 title.gd 的既有约定），所以 .tscn 里只有一个 Control 根节点。
+## M0 目标:跑通 title 到 MapScreen 到 战斗 到 MapScreen 的流程，并验证层数/金币能跨场景保留
+## M3 会把 DEMO_NODES 换成 RunMap 生成的随机路线图，并让节点类型决定关卡目标
+## UI 全部由代码生成 沿用 title.gd 的既有约定 ，所以 .tscn 里只有一个 Control 根节点
 
 const COLOR_BACKGROUND := Color(0.0588, 0.0588, 0.0588)
 const COLOR_TITLE := Color(1.0, 0.87, 0.55)
@@ -15,7 +15,7 @@ const FONT_SIZE_SUBTITLE := 20
 const FONT_SIZE_BODY := 16
 const FONT_SIZE_SMALL := 14
 
-## M0 临时：本层固定展示 3 个节点。M3 由 RunMap 随机生成。
+## M0 临时:本层固定展示 3 个节点M3 由 RunMap 随机生成
 const DEMO_NODES := [
 	{"type": "battle", "label": "战斗"},
 	{"type": "elite", "label": "精英"},
@@ -26,7 +26,7 @@ var _status_label: Label
 
 
 func _ready() -> void:
-	# 兜底：直接从编辑器单跑这个场景时，没有进行中的一局就先开一局
+	# 兜底:直接从编辑器单跑这个场景时，没有进行中的一局就先开一局
 	if not RunState.is_active:
 		RunState.reset()
 	RunState.gold_changed.connect(_on_state_changed)
@@ -69,7 +69,7 @@ func _build_ui() -> void:
 		node_row.add_child(node_button)
 
 	box.add_child(_make_spacer(10))
-	var debug_button := _make_button("[调试] 模拟过关 → 下一层", "DebugAdvanceButton")
+	var debug_button := _make_button("调试: 模拟过关 到 下一层", "DebugAdvanceButton")
 	debug_button.pressed.connect(_on_debug_advance_pressed)
 	box.add_child(debug_button)
 
@@ -79,7 +79,7 @@ func _build_ui() -> void:
 
 	box.add_child(_make_spacer(14))
 	box.add_child(_make_label(
-		"M0 骨架：节点尚未接入真正的关卡目标与随机地图，将在 M1~M5 逐步替换。",
+		"M0 骨架:节点尚未接入真正的关卡目标与随机地图，将在 M1~M5 逐步替换",
 		FONT_SIZE_SMALL, COLOR_HINT))
 
 	_refresh_status()
@@ -90,7 +90,7 @@ func _build_ui() -> void:
 func _refresh_status() -> void:
 	if _status_label == null:
 		return
-	_status_label.text = "第 %d 层 / 共 %d 层　　金币 %d　　本局击杀 %d" % [
+	_status_label.text = "第 %d 层 / 共 %d 层  金币 %d  本局击杀 %d" % [
 		RunState.floor_index, RunState.MAX_FLOOR, RunState.gold, RunState.total_kills,
 	]
 
@@ -101,9 +101,9 @@ func _on_node_pressed(node_type: String) -> void:
 			# M1/M2 建好 battle.tscn 后，GameFlow 会自动切到新战斗场景；现在先落到经典战斗场景
 			GameFlow.start_battle({"floor": RunState.floor_index, "node_type": node_type})
 		"shop":
-			push_warning("商店还没实装（计划 M5）")
+			push_warning("商店还没实装 计划 M5 ")
 		_:
-			push_warning("未知节点类型：%s" % node_type)
+			push_warning("未知节点类型:%s" % node_type)
 
 
 func _on_debug_advance_pressed() -> void:

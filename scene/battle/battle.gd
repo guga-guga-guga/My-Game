@@ -1,24 +1,24 @@
 extends "res://scene/game.gd"
-## Battle：程序化场地 + 关卡目标（M2）
+## Battle:程序化场地 + 关卡目标 M2 
 ##
-## 只覆盖三个钩子，其余全部复用 game.gd：
-##   _ready()              插入"生成地形 → 铺瓦片 → 建红门出怪点 → 重建寻路"
+## 只覆盖三个钩子，其余全部复用 game.gd:
+##   _ready()              插入"生成地形 到 铺瓦片 到 建红门出怪点 到 重建寻路"
 ##   _process(delta)       追加"波次推进 + 目标 HUD 刷新"
-##   _check_game_result()  改为按 LevelGoal 判定胜负（ALL 语义）
-## ⚠️ 因为覆盖了这三处，game.gd 里对应位置日后新增的逻辑需要同步到这里。
+##   _check_game_result()  改为按 LevelGoal 判定胜负 ALL 语义 
+## ⚠️ 因为覆盖了这三处，game.gd 里对应位置日后新增的逻辑需要同步到这里
 
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const LevelGoal = preload("res://scene/battle/level_goal.gd")
 
 @export_group("场地")
-## 场地尺寸（格），会被 ArenaGenerator 夹到 24x16 ~ 38x23
+## 场地尺寸 格 ，会被 ArenaGenerator 夹到 24x16 ~ 38x23
 @export var arena_width: int = 30
 @export var arena_height: int = 20
 ## 0 = 每次随机；填数字可复现同一张图
 @export var arena_seed: int = 0
 
 @export_group("调试")
-## 强制目标类型（survive / kill / clear_waves / boss）；空 = 按节点类型自动
+## 强制目标类型 survive / kill / clear_waves / boss ；空 = 按节点类型自动
 @export var debug_goal_type: String = ""
 ## 打印目标与场地概要
 @export var debug_print: bool = true
@@ -41,7 +41,7 @@ var _wave_timer_left := 0.0
 func _ready() -> void:
 	random_generator.randomize()
 
-	# ① 目标必须先算：限时决定倒计时条长度（stage_duration 由 _setup_hud 读取）
+	# ① 目标必须先算:限时决定倒计时条长度 stage_duration 由 _setup_hud 读取 
 	goal = LevelGoal.build(_context_floor(), _context_node_type(), debug_goal_type)
 	stage_duration = LevelGoal.stage_duration(goal)
 	_waves = goal.get("waves", [])
@@ -50,7 +50,7 @@ func _ready() -> void:
 	_setup_hud()
 	_setup_goal_hud()
 
-	# ② 场地数据 → ③ 铺瓦片（红门在 Overlay 层）→ ④ 出怪点与红门成对创建
+	# ② 场地数据 到 ③ 铺瓦片 红门在 Overlay 层 到 ④ 出怪点与红门成对创建
 	var use_seed := arena_seed if arena_seed != 0 else random_generator.randi()
 	var generator = ArenaGen.new()
 	arena_data = generator.generate(arena_width, arena_height, use_seed)
@@ -58,7 +58,7 @@ func _ready() -> void:
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
 	player.global_position = cell_to_world(arena_data["player_spawn"])
 
-	# ⑤ 顺序关键：铺完瓦片之后才能重建寻路网格
+	# ⑤ 顺序关键:铺完瓦片之后才能重建寻路网格
 	_setup_enemy_pathfinder()
 	_collect_enemy_spawn_points()
 	_warn_spawn_points_inside_walls()
@@ -66,7 +66,7 @@ func _ready() -> void:
 	_configure_enemy_spawn_timer()
 	_keep_player_centered()
 
-	# ⑥ 刷怪：有波次表的关卡走波次推进；其余沿用父类的无限刷怪
+	# ⑥ 刷怪:有波次表的关卡走波次推进；其余沿用父类的无限刷怪
 	if _waves.is_empty():
 		_spawn_initial_enemies()
 		_start_enemy_spawn_timer()
@@ -96,26 +96,26 @@ func _context_node_type() -> String:
 	return "battle"
 
 
-## 保持原关卡观感：不启用相机限位 → 角色永远在屏幕中心 → HUD 位置固定
+## 保持原关卡观感:不启用相机限位 到 角色永远在屏幕中心 到 HUD 位置固定
 func _keep_player_centered() -> void:
 	var camera := $CameraSystem/Camera2D as Camera2D
 	if camera != null:
 		camera.limit_enabled = false
 
 
-## 格坐标 → 世界坐标（格中心）
+## 格坐标 到 世界坐标 格中心 
 func cell_to_world(cell: Vector2i) -> Vector2:
 	return Vector2(cell.x * ArenaGen.TILE_SIZE + ArenaGen.TILE_SIZE * 0.5,
 		cell.y * ArenaGen.TILE_SIZE + ArenaGen.TILE_SIZE * 0.5)
 
 
 func _process(delta: float) -> void:
-	super._process(delta)              # 父类：倒计时 / HUD / 胜负判定（判定已被我覆盖）
+	super._process(delta)              # 父类:倒计时 / HUD / 胜负判定 判定已被我覆盖 
 	_update_waves(delta)
 	_refresh_goal_hud()
 
 
-## 波次推进：刷完一波 → 等场上清空 → 下一波；最后一波清空即达成目标
+## 波次推进:刷完一波 到 等场上清空 到 下一波；最后一波清空即达成目标
 func _update_waves(delta: float) -> void:
 	if _waves.is_empty() or _waves_finished or is_result_displayed:
 		return
@@ -135,7 +135,7 @@ func _update_waves(delta: float) -> void:
 			wave["spawned"] = int(wave.get("spawned", 0)) + 1
 			_wave_timer_left = maxf(float(wave.get("interval", 0.8)), 0.05)
 		else:
-			_wave_timer_left = 0.25          # 场上满员 / 没有可用出生点 → 稍后重试
+			_wave_timer_left = 0.25          # 场上满员 / 没有可用出生点 到 稍后重试
 		return
 	if _get_alive_enemy_count() > 0:
 		return
@@ -147,7 +147,7 @@ func _update_waves(delta: float) -> void:
 	_wave_timer_left = maxf(float(_waves[_wave_index].get("delay", 1.2)), 0.0)
 
 
-# ---------------- 目标 HUD：屏幕底部居中，纯文字（零美术） ----------------
+# ---------------- 目标 HUD:屏幕底部居中，纯文字 零美术  ----------------
 
 func _setup_goal_hud() -> void:
 	var layer := CanvasLayer.new()
@@ -187,11 +187,11 @@ func _refresh_goal_hud(force: bool = false) -> void:
 	_goal_label.text = head
 	var suffix := ""
 	if LevelGoal.time_limit(goal) > 0.0:
-		suffix = "　剩余 %.0f 秒" % maxf(stage_time_left, 0.0)
-	_detail_label.text = "第 %d 层 · %s%s" % [int(goal.get("floor", 1)), detail, suffix]
+		suffix = " 剩余 %.0f 秒" % maxf(stage_time_left, 0.0)
+	_detail_label.text = "第 %d 层 ， %s%s" % [int(goal.get("floor", 1)), detail, suffix]
 
 
-# ---------------- 胜负判定：覆盖父类，改成按 LevelGoal 的 ALL 语义 ----------------
+# ---------------- 胜负判定:覆盖父类，改成按 LevelGoal 的 ALL 语义 ----------------
 
 func _goal_state() -> Dictionary:
 	return {
@@ -199,7 +199,7 @@ func _goal_state() -> Dictionary:
 		"time_left": stage_time_left,
 		"waves_done": _waves_done,
 		"waves_total": _waves.size(),
-		"boss_defeated": false,          # M3：Boss 死亡时由 Boss 置真
+		"boss_defeated": false,          # M3:Boss 死亡时由 Boss 置真
 	}
 
 
@@ -217,7 +217,7 @@ func _check_game_result() -> void:
 		_show_result_dialog(RESULT_TITLE_LOSE, "时间到，目标未完成")
 
 
-# ---------------- 开发自检（M1/M2 验收用，稳定后可删） ----------------
+# ---------------- 开发自检 M1/M2 验收用，稳定后可删  ----------------
 
 func _start_self_check() -> void:
 	var probe := Timer.new()
@@ -247,4 +247,4 @@ func _self_check() -> void:
 		_waves_done, _waves.size(), round_kill_count,
 		str(LevelGoal.is_satisfied(goal, _goal_state())),
 		("" if first_enemy == null else "；首个敌人距最近红门 %.1f px" % door_distance)])
-	print("[Battle自检] HUD第一行=%s ｜ HUD第二行=%s" % [_goal_label.text, _detail_label.text])
+	print("[Battle自检] HUD第一行=%s ， HUD第二行=%s" % [_goal_label.text, _detail_label.text])

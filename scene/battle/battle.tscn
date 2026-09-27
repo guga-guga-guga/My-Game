@@ -185,7 +185,7 @@ title = "游戏结束"
 position = Vector2i(0, 36)
 size = Vector2i(124, 88)
 unresizable = true
-dialog_text = "！？强强？！"
+dialog_text = "强强"
 
 [node name="AudioContainer" type="Node" parent="." unique_id=1764169731]
 

@@ -1,28 +1,28 @@
 extends RefCounted
-## 程序化战斗场地生成器（M1）
+## 程序化战斗场地生成器 M1 
 ##
-## 设计目标：产出"连通、有掩体、出怪点落在红门上"的场地数据，且**不依赖任何节点**，
-## 因此可以脱离场景单独 headless 测试（见 tools/test_arena_generator.gd）。
+## 设计目标:产出"连通，有掩体，出怪点落在红门上"的场地数据，且**不依赖任何节点**，
+## 因此可以脱离场景单独 headless 测试 见 tools/test_arena_generator.gd 
 ##
-## 瓦片坐标全部来自 tools/inspect_tileset.gd 的实测结果，改图集时必须同步这里。
-## 关键约定（见 docs/闯关与NPC对话系统设计方案.md 第 11 节）：
-##   1) 敌人出生点必须落在红门（Overlay 装饰瓦片）上，且该格必须可通行；
+## 瓦片坐标全部来自 tools/inspect_tileset.gd 的实测结果，改图集时必须同步这里
+## 关键约定 见 docs/闯关与NPC对话系统设计方案.md 第 11 节 :
+##   1) 敌人出生点必须落在红门 Overlay 装饰瓦片 上，且该格必须可通行；
 ##   2) 地面/墙壁的唯一判据是"该瓦片有没有碰撞多边形"，不能用错；
-##   3) 生成后必须 flood fill 校验连通性。
+##   3) 生成后必须 flood fill 校验连通性
 
-# ---- 地面图层（TileSet: source 0 = 瓦片.png 16x16, source 1 = 动态瓦片.png 16x16）----
+# ---- 地面图层 TileSet: source 0 = 瓦片.png 16x16, source 1 = 动态瓦片.png 16x16 ----
 const GROUND_SOURCE := 0
-const GROUND_TILE := Vector2i(0, 0)                    ## 主地面（无碰撞），实测用量最高
-const WALL_TILES: Array[Vector2i] = [                  ## 静态墙/岩石（有碰撞），实测 7 种
+const GROUND_TILE := Vector2i(0, 0)                    ## 主地面 无碰撞 ，实测用量最高
+const WALL_TILES: Array[Vector2i] = [                  ## 静态墙/岩石 有碰撞 ，实测 7 种
 	Vector2i(1, 0), Vector2i(2, 0), Vector2i(0, 1), Vector2i(0, 2),
 	Vector2i(2, 3), Vector2i(3, 2), Vector2i(3, 3),
 ]
 const EDGE_SOURCE := 1
-const EDGE_TILES: Array[Vector2i] = [                  ## 边界墙（动画 4 帧，有碰撞），实测 4 种
+const EDGE_TILES: Array[Vector2i] = [                  ## 边界墙 动画 4 帧，有碰撞 ，实测 4 种
 	Vector2i(0, 2), Vector2i(0, 3), Vector2i(0, 4), Vector2i(0, 5),
 ]
 
-# ---- Overlay 图层（独立 TileSet：source 0 = 动态瓦片.png 的 16x32 区域）----
+# ---- Overlay 图层 独立 TileSet:source 0 = 动态瓦片.png 的 16x32 区域 ----
 const DOOR_SOURCE := 0
 const DOOR_TILE := Vector2i(0, 0)                       ## 红门，实测平均色 #c70404
 
@@ -32,7 +32,7 @@ const CELL_WALL := 1
 const CELL_EDGE := 2
 
 const TILE_SIZE := 16
-## 生成尺寸硬约束（见方案 11.3：不改 WorldBounds 时上限 38x23）
+## 生成尺寸硬约束 见方案 11.3:不改 WorldBounds 时上限 38x23 
 const MIN_WIDTH := 24
 const MIN_HEIGHT := 16
 const MAX_WIDTH := 38
@@ -43,8 +43,8 @@ const MAX_ATTEMPTS := 24
 const FOUR_DIRS: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 
 
-## 生成一片场地。失败会换种子重试；最终回落"空房间"保底布局。
-## 返回字段：ok / seed / width / height / grid / doors / spawns / player_spawn /
+## 生成一片场地失败会换种子重试；最终回落"空房间"保底布局
+## 返回字段:ok / seed / width / height / grid / doors / spawns / player_spawn /
 ##           room_count / floor_count / message
 func generate(width: int, height: int, rng_seed: int) -> Dictionary:
 	var w := clampi(width, MIN_WIDTH, MAX_WIDTH)
@@ -56,7 +56,7 @@ func generate(width: int, height: int, rng_seed: int) -> Dictionary:
 			return data
 		last_reason = String(data.get("reason", ""))
 	var fallback := _empty_room(w, h)
-	fallback["message"] = "连续 %d 次生成失败（最后原因：%s），已回落保底布局" % [MAX_ATTEMPTS, last_reason]
+	fallback["message"] = "连续 %d 次生成失败 最后原因:%s ，已回落保底布局" % [MAX_ATTEMPTS, last_reason]
 	return fallback
 
 
@@ -67,8 +67,8 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 	grid.resize(w * h)
 	grid.fill(CELL_WALL)
 
-	# 房间：把可玩区域切成 cols x rows 个分区，每个分区里随机放一间房。
-	# （纯随机撒点会让房间扎堆、留下大片实心墙；分区撒点地形更均匀、更像原关卡）
+	# 房间:把可玩区域切成 cols x rows 个分区，每个分区里随机放一间房
+	#  纯随机撒点会让房间扎堆，留下大片实心墙；分区撒点地形更均匀，更像原关卡 
 	var room_count := clampi(3 + int(w * h / 240.0), 3, 6)
 	var cols := 2
 	var rows := clampi(int(ceil(float(room_count) / 2.0)), 2, 3)
@@ -97,7 +97,7 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 	if rooms.size() < 2:
 		return {"ok": false, "reason": "房间数不足(%d)" % rooms.size()}
 
-	# 走廊：按 x 排序后依次连通相邻房间中心（L 形，宽 2 格）
+	# 走廊:按 x 排序后依次连通相邻房间中心 L 形，宽 2 格 
 	var sorted_rooms := rooms.duplicate()
 	sorted_rooms.sort_custom(func(a: Rect2i, b: Rect2i) -> bool: return a.position.x < b.position.x)
 	for i in range(sorted_rooms.size() - 1):
@@ -108,7 +108,7 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 		_carve_h_line(grid, w, a_center.x, b_center.x, b_center.y)
 		_carve_v_line(grid, w, h, a_center.y, b_center.y, a_center.x)
 
-	# 掩体：房间里随机放几块 1x1/2x1 的静态墙（不贴房间边缘）
+	# 掩体:房间里随机放几块 1x1/2x1 的静态墙 不贴房间边缘 
 	for _i in range(rng.randi_range(4, 8)):
 		var room := rooms[rng.randi_range(0, rooms.size() - 1)]
 		if room.size.x < 4 or room.size.y < 4:
@@ -119,7 +119,7 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 		if rng.randf() < 0.5 and cx + 1 <= room.end.x - 2:
 			grid[cy * w + cx + 1] = CELL_WALL
 
-	# 边界墙（外圈 1 格）
+	# 边界墙 外圈 1 格 
 	for x in range(w):
 		grid[x] = CELL_EDGE
 		grid[(h - 1) * w + x] = CELL_EDGE
@@ -127,7 +127,7 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 		grid[y * w] = CELL_EDGE
 		grid[y * w + w - 1] = CELL_EDGE
 
-	# 红门：四边各一处
+	# 红门:四边各一处
 	var doors: Array[Dictionary] = []
 	for side in ["left", "right", "top", "bottom"]:
 		var door := _make_door(grid, w, h, side, rng)
@@ -138,7 +138,7 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 			return {"ok": false, "reason": "红门格不是地板(%s)" % side}
 		doors.append(door)
 
-	# 玩家出生点：离所有红门最远的地板格
+	# 玩家出生点:离所有红门最远的地板格
 	var player_spawn := _farthest_floor_from_doors(grid, w, h, doors)
 	if player_spawn == Vector2i(-1, -1):
 		return {"ok": false, "reason": "找不到玩家出生点"}
@@ -161,13 +161,13 @@ func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
 		"message": "",
 	}
 	if not all_doors_reachable(data):
-		return {"ok": false, "reason": "红门不可达（连通性失败）"}
+		return {"ok": false, "reason": "红门不可达 连通性失败 "}
 	if float(data["floor_count"]) / float(w * h) < 0.35:
 		return {"ok": false, "reason": "地板占比过低(%d)" % data["floor_count"]}
 	return data
 
 
-## 保底布局：一整块空房间（四条边中间各开一处红门）。
+## 保底布局:一整块空房间 四条边中间各开一处红门 
 func _empty_room(w: int, h: int) -> Dictionary:
 	var grid: Array = []
 	grid.resize(w * h)
@@ -203,15 +203,15 @@ func _empty_room(w: int, h: int) -> Dictionary:
 	}
 
 
-## 造一处红门。三条要点：
-##   1) 优先挑"内侧已经是地板"的边界格（天然开口，最自然、不用凿墙）；
-##   2) 该边中间带里没有天然开口时，沿 inward 找到最近的已有地板，把中间挖成 2 格宽通道（保证连通）；
-##   3) 红门占 1x2 格（与图集里 16x32 的红门贴图一致），step 记录第二格的方向。
+## 造一处红门三条要点:
+##   1) 优先挑"内侧已经是地板"的边界格 天然开口，最自然，不用凿墙 ；
+##   2) 该边中间带里没有天然开口时，沿 inward 找到最近的已有地板，把中间挖成 2 格宽通道 保证连通 ；
+##   3) 红门占 1x2 格 与图集里 16x32 的红门贴图一致 ，step 记录第二格的方向
 func _make_door(grid: Array, w: int, h: int, side: String, rng: RandomNumberGenerator) -> Dictionary:
 	var band_start := 0
 	var band_end := 0
 	var fixed := 0
-	var is_vertical := false          # 左右两边：门沿 y 变化
+	var is_vertical := false          # 左右两边:门沿 y 变化
 	if side == "left" or side == "right":
 		is_vertical = true
 		band_start = int(h / 3.0)
@@ -233,7 +233,7 @@ func _make_door(grid: Array, w: int, h: int, side: String, rng: RandomNumberGene
 		inward = Vector2i.UP
 	else:
 		return {}
-	var side_step := Vector2i(inward.y, inward.x)    # 垂直于 inward：用来凑出 1x2 的门
+	var side_step := Vector2i(inward.y, inward.x)    # 垂直于 inward:用来凑出 1x2 的门
 
 	# ---- 1) 天然开口 ----
 	var natural: Array[Vector2i] = []
@@ -271,7 +271,7 @@ func _make_door(grid: Array, w: int, h: int, side: String, rng: RandomNumberGene
 	return _open_door(grid, w, h, start, side_step, side)
 
 
-## 把门格与其旁一格都挖成地板（红门贴图 16x32，正好占 1x2 格）。
+## 把门格与其旁一格都挖成地板 红门贴图 16x32，正好占 1x2 格 
 func _open_door(grid: Array, w: int, h: int, cell: Vector2i, side_step: Vector2i, side: String) -> Dictionary:
 	grid[cell.y * w + cell.x] = CELL_FLOOR
 	var second := cell + side_step
@@ -284,7 +284,7 @@ func _in_bounds(cell: Vector2i, w: int, h: int) -> bool:
 	return cell.x >= 0 and cell.y >= 0 and cell.x < w and cell.y < h
 
 
-## 连通性校验：从玩家出生点 flood fill，必须覆盖全部红门格。
+## 连通性校验:从玩家出生点 flood fill，必须覆盖全部红门格
 func all_doors_reachable(data: Dictionary) -> bool:
 	var w: int = data["width"]
 	var h: int = data["height"]
@@ -311,7 +311,7 @@ func all_doors_reachable(data: Dictionary) -> bool:
 	return true
 
 
-## 把生成结果写进两个 TileMapLayer（先清空）。
+## 把生成结果写进两个 TileMapLayer 先清空 
 func apply_to_layers(ground: TileMapLayer, overlay: TileMapLayer, data: Dictionary) -> void:
 	ground.clear()
 	overlay.clear()
@@ -330,14 +330,14 @@ func apply_to_layers(ground: TileMapLayer, overlay: TileMapLayer, data: Dictiona
 				ground.set_cell(cell, EDGE_SOURCE, EDGE_TILES[absi(x * 5 + y * 11) % EDGE_TILES.size()])
 	for door in data["doors"]:
 		overlay.set_cell(door["cell"], DOOR_SOURCE, DOOR_TILE)
-		# 上下边的门开口是"横向 2 格"，而门贴图是 16x32（竖着盖 2 行），
-		# 所以需要并排再补一块才能盖住整个开口；左右边的门贴图本身就够高，一块即可。
+		# 上下边的门开口是"横向 2 格"，而门贴图是 16x32 竖着盖 2 行 ，
+		# 所以需要并排再补一块才能盖住整个开口；左右边的门贴图本身就够高，一块即可
 		var step: Vector2i = door.get("step", Vector2i.ZERO)
 		if step.x != 0:
 			overlay.set_cell(door["cell"] + step, DOOR_SOURCE, DOOR_TILE)
 
 
-## 出怪点世界坐标 = 红门 1x2 格的中心（贴图 16x32 正好覆盖这两格）
+## 出怪点世界坐标 = 红门 1x2 格的中心 贴图 16x32 正好覆盖这两格 
 func spawn_world_position(door: Dictionary) -> Vector2:
 	var cell: Vector2i = door["cell"]
 	var step: Vector2i = door.get("step", Vector2i.ZERO)
@@ -345,9 +345,9 @@ func spawn_world_position(door: Dictionary) -> Vector2:
 	return Vector2(center.x * TILE_SIZE + TILE_SIZE * 0.5, center.y * TILE_SIZE + TILE_SIZE * 0.5)
 
 
-## 在指定父节点下按生成结果重建出怪 Marker（先清掉旧的），并返回它们。
+## 在指定父节点下按生成结果重建出怪 Marker 先清掉旧的 ，并返回它们
 func create_spawn_markers(parent: Node2D, data: Dictionary) -> Array[Marker2D]:
-	# 必须"立即"释放：queue_free() 是延迟到帧末的，会让同一帧的 _collect_enemy_spawn_points()
+	# 必须"立即"释放:queue_free() 是延迟到帧末的，会让同一帧的 _collect_enemy_spawn_points()
 	# 同时收下旧 Marker 和新 Marker，导致敌人从旧位置刷出
 	for child in parent.get_children():
 		parent.remove_child(child)
@@ -362,7 +362,7 @@ func create_spawn_markers(parent: Node2D, data: Dictionary) -> Array[Marker2D]:
 	return markers
 
 
-## 供调试/测试用的 ASCII 预览：# 边界墙 / X 内部墙 / . 地板 / D 红门 / P 玩家出生点
+## 供调试/测试用的 ASCII 预览:# 边界墙 / X 内部墙 / . 地板 / D 红门 / P 玩家出生点
 func to_ascii(data: Dictionary) -> String:
 	var w: int = data["width"]
 	var h: int = data["height"]
@@ -426,7 +426,7 @@ func _count_floor(grid: Array) -> int:
 	return n
 
 
-## 多源 BFS：每个地板格到最近红门的步数，取最远者当玩家出生点。
+## 多源 BFS:每个地板格到最近红门的步数，取最远者当玩家出生点
 func _farthest_floor_from_doors(grid: Array, w: int, h: int, doors: Array) -> Vector2i:
 	var dist: Array = []
 	dist.resize(w * h)

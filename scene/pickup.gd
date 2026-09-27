@@ -35,7 +35,7 @@ func _process(delta: float) -> void:
 		is_expiring = true
 		_set_blink_enabled(true)
 	
-	# 检查是否应该停止闪烁（如果时间又变大了，虽然不太可能）
+	# 检查是否应该停止闪烁 如果时间又变大了，虽然不太可能 
 	if lifetime_timer.time_left > blink_before_expire and is_expiring:
 		is_expiring = false
 		_set_blink_enabled(false)
