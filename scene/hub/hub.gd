@@ -34,7 +34,7 @@ func _ready() -> void:
 
 	_player = $Player as Player
 	# 玩家出生点放在"最下面一排的中间"，三个角色在上排 —— 12x6 很小，必须拉开否则一出生就同时靠近多个角色
-	var spawn_cell := _nearest_floor(Vector2i(int(arena_data["width"]) / 2, int(arena_data["height"]) - 2))
+	var spawn_cell := _nearest_floor(Vector2i(int(floor(float(arena_data["width"]) / 2.0)), int(arena_data["height"]) - 2))
 	_player.global_position = _cell_center(spawn_cell)
 
 	# HUD：Hub 没有时间限制 → 删掉时钟与绿条，生命值上移一行（沿用 M3 定的规则）
@@ -56,7 +56,7 @@ func _spawn_npcs() -> void:
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
 	var player_frames: SpriteFrames = _player_frames()
-	var center := Vector2i(int(arena_data["width"]) / 2, int(arena_data["height"]) / 2)
+	var center := Vector2i(int(floor(float(arena_data["width"]) / 2.0)), int(floor(float(arena_data["height"]) / 2.0)))
 	for index in range(SLOT_OFFSETS.size()):
 		var kind: String = kinds[index]      # 顺序固定：精英 / 普通 / 商店
 		var cell := _nearest_floor(center + SLOT_OFFSETS[index])
@@ -101,7 +101,7 @@ func _build_hub_arena(w: int, h: int) -> Dictionary:
 		grid[y * width + width - 1] = ArenaGen.CELL_EDGE
 	return {
 		"ok": true, "mode": "hub", "width": width, "height": height, "grid": grid,
-		"doors": [], "spawns": [], "player_spawn": Vector2i(int(width / 2), int(height / 2)),
+		"doors": [], "spawns": [], "player_spawn": Vector2i(int(floor(float(width) / 2.0)), int(floor(float(height) / 2.0))),
 		"room_count": 1, "obstacles": [], "floor_count": (width - 2) * (height - 2), "message": "",
 	}
 
