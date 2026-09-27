@@ -1,10 +1,20 @@
 extends CharacterBody2D
 class_name Enemy
 
+#敌人进入死亡流程时广播一次，供主场景统计本局击杀数。
+signal died
+
 const DEFAULT_BULLET_DAMAGE := 1
 const BLINK_ENABLED_SHADER_PARAMETER := &"blink_enabled"
 const PICKUP_SCENE := preload("res://scene/pickup.tscn")
 const EXPLOSION_QUERY_MAX_RESULTS := 16
+#路径重算间隔（秒），避免每帧都跑寻路。
+const PATH_RECOMPUTE_INTERVAL := 0.25
+#距离路点多近就算“已经到达”，可以开始看下一个路点（像素）。
+const WAYPOINT_REACHED_DISTANCE := 5.0
+#本体碰撞圆比配置半径缩小的量（像素）：16px 的格子里半径 8 是零余量，
+#留出余量才能避免被物理分离反复推挤、咬在墙角。
+const BODY_RADIUS_INSET := 2.0
 
 enum DeathSequenceStage {
 	NONE,
@@ -37,6 +47,16 @@ enum DeathSequenceStage {
 
 #当前追踪的玩家对象，由敌人管理器在生成时注入。
 var target_player: Player = null
+#当前跟随的路径（世界坐标）；为空时表示直接朝玩家直线追踪。
+var current_path: PackedVector2Array = PackedVector2Array()
+#距离下次重算路径还剩多少秒。
+var path_recompute_time_left: float = 0.0
+#上次算路时玩家所在的格子，用于“玩家换格子后立刻重算”。
+var last_goal_cell: Vector2i = Vector2i(2147483647, 2147483647)
+#缓存解析到的寻路器，避免每帧都去找。
+var _pathfinder: EnemyPathfinder = null
+# [临时调试] 已注释，需要时取消注释：是否已经打印过首次算路信息。
+#var _has_logged_path_debug: bool = false
 #当前生命值，根据配置资源初始化。
 var current_health: int = 1
 #敌人死亡后停止移动和受伤处理。
@@ -58,6 +78,10 @@ var random_generator: RandomNumberGenerator = RandomNumberGenerator.new()
 #初始化配置、信号和默认动画。
 func _ready() -> void:
 	random_generator.randomize()
+	#俯视角必须用 FLOATING：默认的 GROUNDED 会把墙壁当成地板/斜坡来处理。
+	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	#允许以任意夹角沿墙滑行。默认 15°，夹角小于它时 move_and_slide 会直接停止滑行。
+	wall_min_slide_angle = 0.0
 	touch_damage_area.body_entered.connect(_on_touch_damage_area_body_entered)
 	touch_damage_area.body_exited.connect(_on_touch_damage_area_body_exited)
 	touch_damage_area.area_entered.connect(_on_touch_damage_area_area_entered)
@@ -68,6 +92,8 @@ func _ready() -> void:
 func setup(enemy_config: EnemyConfig, player: Player) -> void:
 	config = enemy_config
 	target_player = player
+	#错峰重算路径，避免同批敌人在同一帧一起跑寻路。
+	path_recompute_time_left = randf() * PATH_RECOMPUTE_INTERVAL
 	_apply_config()
 	
 func apply_damage(amount: int) -> bool:
@@ -96,12 +122,18 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector2.ZERO
 		return
 		
-	if not is_instance_valid(target_player):
+	if not is_instance_valid(target_player) or target_player.is_dead:
 		velocity = Vector2.ZERO
 		move_and_slide()
 		return
 		
-	var move_direction := global_position.direction_to(target_player.global_position)
+	_update_path(delta)
+	var move_direction := _get_move_direction()
+	if move_direction == Vector2.ZERO:
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+	
 	_update_facing(move_direction)
 	velocity = move_direction * _get_move_speed()
 	move_and_slide()
@@ -123,9 +155,12 @@ func _apply_config() -> void:
 
 #将配置中的圆型半径同步到实体碰撞和接触伤害区域
 func _apply_collision_radius(radius: float) -> void:
+	#本体碰撞比伤害判定小一圈：本体只和 World 层碰撞，缩小它只影响撞墙，
+	#不会改变接触伤害范围和子弹命中判定。
+	var body_radius := maxf(radius - BODY_RADIUS_INSET, 1.0)
 	var body_shape := collision_shape.shape as CircleShape2D
 	if body_shape != null:
-		body_shape.radius = radius
+		body_shape.radius = body_radius
 	
 	var damage_shape := touch_damage_shape.shape as CircleShape2D
 	if damage_shape != null:
@@ -149,6 +184,80 @@ func _update_facing(move_direction: Vector2) -> void:
 		return
 		
 	animated_sprite.flip_h = move_direction.x < 0.0
+
+
+#按固定间隔或玩家换格时重算一次路径，避免每帧都跑 A*。
+func _update_path(delta: float) -> void:
+	var pathfinder := _resolve_pathfinder()
+	if pathfinder == null or not pathfinder.is_usable():
+		current_path = PackedVector2Array()
+		# [临时调试] 已注释，需要时取消注释
+		#if not _has_logged_path_debug:
+		#	_has_logged_path_debug = true
+		#	print("[寻路调试] 敌人 %s 拿不到可用寻路器（pathfinder=%s），走直线" % [
+		#		name,
+		#		pathfinder,
+		#	])
+		return
+	
+	path_recompute_time_left = maxf(path_recompute_time_left - delta, 0.0)
+	var goal_cell := pathfinder.world_to_cell(target_player.global_position)
+	if path_recompute_time_left > 0.0 and goal_cell == last_goal_cell:
+		return
+	
+	path_recompute_time_left = PATH_RECOMPUTE_INTERVAL
+	last_goal_cell = goal_cell
+	
+	var goal_position := target_player.global_position
+	#玩家没有墙体遮挡时直接走直线，连 A* 都不用跑，保持原有的追踪手感。
+	var can_see_player := pathfinder.has_line_of_sight(global_position, goal_position)
+	if can_see_player:
+		current_path = PackedVector2Array()
+	else:
+		current_path = pathfinder.find_path(global_position, goal_position)
+	
+	# [临时调试] 已注释，需要时取消注释
+	#if not _has_logged_path_debug:
+	#	_has_logged_path_debug = true
+	#	print("[寻路调试] 敌人 %s 自身格=%s 玩家格=%s 两者之间无墙(可见)=%s 路径点数=%d" % [
+	#		name,
+	#		pathfinder.world_to_cell(global_position),
+	#		goal_cell,
+	#		can_see_player,
+	#		current_path.size(),
+	#	])
+
+
+#解析当前可用的寻路器：优先取全局实例，取不到时按分组兜底查找。
+func _resolve_pathfinder() -> EnemyPathfinder:
+	if _pathfinder != null and is_instance_valid(_pathfinder):
+		return _pathfinder
+	_pathfinder = EnemyPathfinder.instance
+	if _pathfinder != null and is_instance_valid(_pathfinder):
+		return _pathfinder
+	var tree := get_tree()
+	if tree == null:
+		return null
+	_pathfinder = tree.get_first_node_in_group(EnemyPathfinder.PATHFINDER_GROUP) as EnemyPathfinder
+	return _pathfinder
+
+
+#有路径就沿路点走；没有路径（或已经能直接看到玩家）就退回直线追踪。
+func _get_move_direction() -> Vector2:
+	if current_path.is_empty():
+		return global_position.direction_to(target_player.global_position)
+	
+	#丢掉已经到达的路点，最后一个点永远保留。
+	while current_path.size() > 1:
+		if global_position.distance_to(current_path[0]) > WAYPOINT_REACHED_DISTANCE:
+			break
+		current_path.remove_at(0)
+	
+	#只剩终点时朝玩家的实时位置走，避免一直追着算路那一刻的残影。
+	if current_path.size() <= 1:
+		return global_position.direction_to(target_player.global_position)
+	
+	return global_position.direction_to(current_path[0])
 
 #接触玩家时尝试造成伤害，后续通过冷却控制持续伤害节奏
 func _on_touch_damage_area_body_entered(body: Node2D)-> void:
@@ -229,7 +338,10 @@ func _die() -> void:
 		return
 
 	is_dead = true
+	#先广播再走死亡流程；is_dead 已置位，保证每只敌人只统计一次
+	died.emit()
 	velocity = Vector2.ZERO
+	current_path = PackedVector2Array()
 	touched_player = null
 	hurt_blink_time_left = 0.0
 	_set_hurt_blink_enabled(false)

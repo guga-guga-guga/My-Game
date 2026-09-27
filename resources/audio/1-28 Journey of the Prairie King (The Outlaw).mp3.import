@@ -12,7 +12,7 @@ dest_files=["res://.godot/imported/1-28 Journey of the Prairie King (The Outlaw)
 
 [params]
 
-loop=false
+loop=true
 loop_offset=0
 bpm=0
 beat_count=0
