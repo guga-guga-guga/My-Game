@@ -162,3 +162,10 @@ static func is_timed_out(goal: Dictionary, state: Dictionary) -> bool:
 ## 是否是合法的目标类型 build 的强制参数校验用 
 static func is_valid_type(type: String) -> bool:
 	return type == TYPE_SURVIVE or type == TYPE_KILL or type == TYPE_CLEAR_WAVES or type == TYPE_BOSS
+
+## 简短目标描述（路线图按钮上显示，不带"目标:"前缀和限时后缀）
+static func short_label(goal: Dictionary) -> String:
+	var parts: Array[String] = []
+	for condition in goal.get("conditions", []):
+		parts.append(String(condition.get("label", "?")))
+	return " + ".join(parts)

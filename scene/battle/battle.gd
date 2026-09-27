@@ -26,6 +26,8 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 @export var debug_print: bool = true
 ## 调试: 加快 Boss 技能节奏（headless 自检用）
 @export var debug_fast_boss: bool = false
+## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
+@export var debug_instant_boss_win: bool = false
 
 var arena_data: Dictionary = {}
 var goal: Dictionary = {}
@@ -42,6 +44,8 @@ var _waves_finished := false
 var _wave_timer_left := 0.0
 var _boss_defeated := false
 var _boss: Enemy = null
+var _last_result_won := false
+var _result_recorded := false
 
 
 func _ready() -> void:
@@ -176,6 +180,8 @@ func _spawn_boss() -> void:
 	if not boss.died.is_connected(_on_enemy_died):
 		boss.died.connect(_on_enemy_died)
 	print("[Battle] Boss 已放出: 出生格=%s（玩家在 %s）" % [str(spawn_cell), str(arena_data["player_spawn"])])
+	if debug_instant_boss_win:
+		_start_debug_instant_win()
 
 
 ## 取"离玩家最远的那道红门"作为 Boss 出生点
@@ -193,6 +199,7 @@ func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 
 func _on_boss_defeated() -> void:
 	_boss_defeated = true
+
 	var bar := $Player/HUDLayer/TimeBar as Sprite2D
 	if bar != null:
 		bar.visible = false          # Boss 死后收起红条
@@ -278,6 +285,83 @@ func _update_time_bar() -> void:
 	time_bar.position.x = time_bar_left_edge_x + (current_width * 0.5)
 
 
+## 调试: 出生 1.2 秒后模拟"Boss 被打死"，然后走完整条 结算 -> 确定 链路
+func _start_debug_instant_win() -> void:
+	var timer := Timer.new()
+	timer.wait_time = 1.2
+	timer.one_shot = true
+	timer.timeout.connect(_debug_instant_win)
+	add_child(timer)
+	timer.start()
+
+
+func _on_result_dialog_exit_requested() -> void:
+	Engine.time_scale = 1.0
+	get_tree().paused = false
+	_record_run_progress()
+	if _last_result_won:
+		if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+			RunState.finish_run(true)          # 最终层通关: 整局结束
+			GameFlow.goto_title()
+		else:
+			RunState.advance_floor()           # 普通关胜利: 层数 +1 回路线图
+			GameFlow.goto_map()
+	else:
+		RunState.finish_run(false)             # 失败: 整局结束
+		GameFlow.goto_title()
+
+
+## 把本场战绩并进整局状态（只并一次）
+func _record_run_progress() -> void:
+	if _result_recorded:
+		return
+	_result_recorded = true
+	RunState.total_kills += round_kill_count
+	RunState.run_elapsed += _get_round_elapsed_time()
+
+
+## 通关总结（打在同一个结算弹窗里，多行文本会让弹窗自动放大）
+func _build_run_summary() -> String:
+	_record_run_progress()
+	return "恭喜通关
+到达层数: %d / %d
+本局总击杀: %d
+本局用时: %.1f 秒
+金币: %d
+
+按确定返回标题" % [
+		RunState.floor_index, RunState.MAX_FLOOR,
+		RunState.total_kills, RunState.run_elapsed, RunState.gold]
+
+
+## 覆盖父类: 多行文本时把弹窗放大，避免被裁掉
+func _show_result_dialog(result_title: String, result_message: String) -> void:
+	super._show_result_dialog(result_title, result_message)
+	if result_message.contains("
+") and result_dialog != null:
+		result_dialog.popup_centered(Vector2i(460, 260))
+
+
+### 调试: 模拟击败 Boss 后，直接把"总结文本 + 确定后的整局状态"打出来。
+## 说明: 结算弹窗会把 time_scale 设为 0，计时器全部冻结，所以这里不用延时，
+##       直接在模拟击杀的同一帧验证流程（等价于玩家点确定）。
+func _debug_instant_win() -> void:
+	print("[Battle调试] 模拟击败 Boss")
+	_last_result_won = true          # 真实路径里由 _check_game_result() 置位，这里手动补上
+	if not _boss_defeated:
+		_on_boss_defeated()
+	print("[Battle调试] 通关总结文本=%s" % _build_run_summary().replace("
+", " | "))
+	print("[Battle调试] 点确定前: 层数=%d 局进行中=%s 总击杀=%d 用时=%.1f" % [
+		RunState.floor_index, str(RunState.is_active), RunState.total_kills, RunState.run_elapsed])
+	# 模拟玩家点确定（清掉暂停，避免后续场景切不过去）
+	Engine.time_scale = 1.0
+	get_tree().paused = false
+	_on_result_dialog_exit_requested()
+	print("[Battle调试] 点确定后: 层数=%d 局进行中=%s 已通关=%s 总击杀=%d" % [
+		RunState.floor_index, str(RunState.is_active), str(RunState.cleared), RunState.total_kills])
+
+
 # ---------------- 目标 HUD:屏幕底部居中，纯文字 零美术  ----------------
 
 func _setup_goal_hud() -> void:
@@ -339,13 +423,19 @@ func _check_game_result() -> void:
 	if is_result_displayed:
 		return
 	if _get_player_current_health() <= 0:
+		_last_result_won = false
 		_show_result_dialog(RESULT_TITLE_LOSE, RESULT_MESSAGE_LOSE)
 		return
 	var state := _goal_state()
 	if LevelGoal.is_satisfied(goal, state):
-		_show_result_dialog(RESULT_TITLE_WIN, RESULT_MESSAGE_WIN)
+		_last_result_won = true
+		if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+			_show_result_dialog("通关", _build_run_summary())      # 最终层: 显示整局总结
+		else:
+			_show_result_dialog(RESULT_TITLE_WIN, RESULT_MESSAGE_WIN)
 		return
 	if LevelGoal.is_timed_out(goal, state):
+		_last_result_won = false
 		_show_result_dialog(RESULT_TITLE_LOSE, "时间到，目标未完成")
 
 
