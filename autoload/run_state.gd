@@ -45,6 +45,10 @@ var bonus_invincibility: float = 0.0
 ## 本层路线图 M3 由 RunMap 填充 ，M0 阶段留空
 var route: Array = []
 
+## 上一关的成绩汇报（关卡结束后由 Battle 写入，Hub 到达时展示一次后清空）
+## 字段: floor / node_type / goal_text / won / kills / elapsed / gold_gained / gold_total / health / max_health
+var last_level_report: Dictionary = {}
+
 
 ## 开始新的一局:把全部进度清零
 func reset() -> void:
@@ -65,6 +69,7 @@ func reset() -> void:
 	bonus_invincibility = 0.0
 	route.clear()
 	shop_buy_count.clear()
+	last_level_report.clear()
 	run_started.emit()
 	floor_changed.emit(floor_index)
 	gold_changed.emit(gold)
@@ -95,6 +100,20 @@ func advance_floor() -> void:
 
 func is_final_floor() -> bool:
 	return floor_index >= MAX_FLOOR
+
+
+## 节点类型的显示名（Hub 角色名 / 关卡汇报共用）
+func kind_title(kind: String) -> String:
+	match kind:
+		"battle":
+			return "普通关"
+		"elite":
+			return "精英关"
+		"shop":
+			return "商店"
+		"boss":
+			return "BOSS"
+	return kind
 
 
 ## 是否 BOSS 层（不传参数 = 当前层）
