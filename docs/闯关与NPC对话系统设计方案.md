@@ -1,0 +1,338 @@
+# 唯时代尔 —— 闯关 / NPC 对话 / 新地图 设计方案
+
+> 状态：**方案待评审，未动一行代码**
+> 编写日期：2026-09-27
+> 目标引擎：Godot 4.6.1（`F:\gt\Godot_v4.6.1-stable_win64.exe`）
+> 工作区：`G:\zzgame\My Game\`
+
+---
+
+## 0. 需求确认（已与你确认过的选择）
+
+| 项 | 你的选择 |
+|---|---|
+| 关卡结构 | **分支地图（类似爬塔）**：每关结束选下一个节点 |
+| 过关条件 | **四种都要**：清空全部波次 / 击杀指定数量 / 撑满倒计时 / 击败 Boss 或到达终点 |
+| 关卡之间 | **商店·升级（用现有 3 种道具）+ 剧情对话 + 本关成绩显示** |
+| 对话触发 | **地图上的 NPC，靠近按 E 触发**（底部对话框 + 打字机效果） |
+| 新地图 | **程序化随机生成布局**（每局不一样） |
+| 本次交付 | 仅方案文档，暂不写代码 |
+
+组合后的成品形态：**Roguelite 俯视角射击**
+一局 = 一张随机生成的爬塔路线图 → 选节点 → 打一场随机地形的战斗（目标由节点类型决定）
+→ 过关结算战绩 → 商店/升级 + 剧情对话 → 回到路线图继续前进 → 最终 Boss → 通关总结。
+
+---
+
+## 1. 现状盘点（读代码得到的事实）
+
+| 项 | 现状 |
+|---|---|
+| 主场景 | `scene/game.tscn`：`Game(Node2D, game.gd)`，子节点 `GroundTileMapLayer` / `OverlayTileMapLayer` / `Player` / `HUDLayer` / `EnemyContainer` / `EnemySpawnPoints` / `EnemySpawnTimer` / `AcceptDialog`(结算) / `AudioContainer`(BGM+胜负音效) / `CameraSystem` |
+| 关卡 | **只有一关**：`stage_duration = 120s`，撑满倒计时即胜；玩家 hp 归零即负；结算后回 `title.tscn` |
+| 刷怪 | `Timer` + 无限刷：`initial_spawn_count / spawn_count_per_tick / spawn_interval → min_spawn_interval`（随时间线性加速）/ `max_alive_enemies = 24` |
+| 敌人 | `EnemyConfig`(Resource)：`enemy_type(basic/shelled/fast/bomber)`、`max_health`、`move_speed`、`collision_radius`、动画名、`explode_on_death`、掉落概率与掉落池。现有 4 份 `.tres` |
+| 敌人 AI | `enemy.gd` 自己带 `AStarGrid2D` 寻路 + 视线检测，`EnemyPathfinder`（`enemy_pathfinder.gd`）在 `game.gd::_ready()` 里 **同步 build 一次**，把"带物理多边形的瓦片格"当墙 |
+| 玩家 | `player.gd`：`move_speed=120` / `max_health=3` / `fire_interval=0.18` / `invincibility_duration=1.0`；道具是**限时 buff**（移速倍率 / 射速倍率 / 浮游炮形态+螺旋弹幕），`apply_pickup(config)` 单入口 |
+| 掉落 | 敌人死亡按概率掉 `pickup_speed/rapid/spiral` 三种 |
+| UI 风格 | **`title.gd` 全部 UI 用代码生成**（不手写 .tscn），这是个很好的既有约定 |
+| 地图数据 | `GroundTileMapLayer.tile_map_data` 是**二进制 `PackedByteArray`** → 手写 `.tscn` 改地图不可行 |
+| 地图尺寸 | 瓦片 16×16，约 **38×24 格 = 608×384 px**；带碰撞的瓦片：`1:0 / 2:0 / 0:1 / 0:2 / 3:2 / 2:3 / 3:3`（瓦片.png）+ 动态瓦片系列 |
+| 寻路 | `EnemyPathfinder.build(Array[TileMapLayer])`，可在**运行时重建**（这是程序化地图的关键接口，已具备） |
+| 战绩 | `round_records.gd` → `user://round_records.json`，存最近 10 局（`index/elapsed/kills/won`） |
+| Autoload | **项目当前 0 个 autoload**（`project.godot` 无 `[autoload]` 段） |
+| 输入 | 只有 `move_left/right/up/down`、`shoot_left/right/up/down` |
+| 物理层 | 1 World / 2 Player / 3 EnemyBody / 4 EnemySensor / 5 Bullet / 6 Pickup / 7 Explosion |
+| 版本控制 | 无 git，`README.md` 仅一行标题 |
+
+---
+
+## 2. 架构决策
+
+### 2.1 把"地图"拆成三层（最关键的一条）
+
+你说的"新增地图"实际混了三件事，必须在架构上分开，否则后面一定打架：
+
+| 层 | 名称 | 内容 | 实现方式 |
+|---|---|---|---|
+| **L1** | `RunMap` 局内路线图 | 爬塔节点图：每层 2~4 个节点，类型 = 战斗 / 精英 / Boss / 商店 / 事件 / 补给 | 纯数据 + 一个 UI 场景 `MapScreen`，**完全不碰 TileMap** |
+| **L2** | `Arena` 战斗场地 | 每场战斗的实际地形（墙、掩体、出怪点、玩家出生点） | **程序化生成**：运行时 `set_cell` 铺 `GroundTileMapLayer` + 动态生成出怪点 |
+| **L3** | `RunState` 整局状态 | 层数、金币、已购升级、血量上限、当前节点、是否通关 | Autoload 单例，跨场景常驻 |
+
+- L1 负责"关卡推进 + 分支选择"
+- L2 负责"每局地形都不一样"
+- L3 负责"跨场景记住你的养成"
+
+### 2.2 场景流程
+
+```
+title.tscn（开始界面）
+   ├─ 开始新局 → RunState.reset() → MapScreen.tscn
+   ├─ 继续上次进度（可选，读 RunState 存档）
+   └─ 经典模式 → game.tscn（保留现有单关玩法，作为回退入口）
+
+MapScreen.tscn（L1 爬塔图）
+   ↓ 选中「战斗 / 精英 / Boss」节点
+Battle.tscn（由 game.tscn 改造）
+   ├─ 进场：ArenaGenerator 生成地形 → 重建寻路 → 生成本关目标 & 波次
+   ├─ 战斗：HUD 显示目标进度
+   ├─ 结束：胜利 → RewardScreen；失败 → 失败结算（重来本节点 / 结束本局）
+   ↓
+RewardScreen（本关成绩 + 商店/三选一升级）
+   ↓（事件节点时）
+DialogueBox（剧情对话）
+   ↓ 回到 MapScreen（层数 +1，重新生成可选节点）
+   ↓ 到达最终层并击败 Boss
+EndScreen（总结：层数 / 总击杀 / 总用时 / 是否通关）→ 写入 RoundRecords
+```
+
+### 2.3 关于 `game.tscn` 的处理（不激进替换）
+
+- **保留 `game.tscn` 现状**，作为"经典模式"入口；
+- 新增 `scene/battle/Battle.tscn`，把 `game.gd` 中的"单场战斗逻辑"抽出来（胜负判定 / 刷怪 / HUD / 结算）；
+- 等 `Battle` 跑通、你验收之后，再决定是否让主流程默认走新链路；
+- 好处：任何一步出问题都能退回现有可玩版本。
+
+### 2.4 UI 风格沿用现有约定
+
+`title.gd` 已经是"UI 全用代码生成"。建议 **`MapScreen` / `RewardScreen` / `DialogueBox` 也全部用代码生成 UI**：
+- 我几乎不需要手写 `.tscn` → 出错概率最低（`.tscn` 是文本但有格式陷阱，尤其 `PackedByteArray`）；
+- 改版式只改代码，和你现有习惯一致。
+
+---
+
+## 3. 程序化随机地形（Arena 生成）
+
+### 3.1 必须绕开的坑
+
+`GroundTileMapLayer.tile_map_data` 是**二进制**，只能运行时用代码铺瓦片；
+`EnemyPathfinder` 又依赖"有物理多边形的瓦片格 = 墙"。
+
+### 3.2 生成流程（全部代码控制）
+
+1. `ground_layer.clear()` 清空旧地形；
+2. 生成 `Array[Array[int]]` 地图网格（0 = 地板，1 = 墙），推荐两种算法（先实现 A，B 作为可选）：
+   - **A. 房间 + 走廊（BSP / 随机房间）**：房间多、掩体感强，适合俯视角射击；
+   - **B. 随机游走 / 元胞自动机**：天然洞穴地形，更"野生"；
+3. 逐格 `ground_layer.set_cell(Vector2i(x, y), source_id, atlas_coords)`：
+   - 墙只能用**带 `physics_layer_0` 多边形的 atlas 坐标**（`1:0` `2:0` `0:1` `0:2` `3:2` `2:3` `3:3`），否则敌人会穿墙、玩家也挡不住；
+   - 地板用无碰撞坐标；
+4. 最外圈强制全墙（保证玩家不会走出画布）；
+5. `OverlayTileMapLayer` 只放装饰（不影响物理）；
+6. **重建寻路**：`EnemyPathfinder.instance.build([ground_layer, overlay_layer])`；
+7. 生成出怪点：所有"距玩家出生点 ≥ N 格"的可走格作为候选池（**不再依赖场景里手摆的 `EnemySpawnPoints`**，改为运行时创建 `Marker2D` 挂到该节点下，保证 `game.gd` 现有 `_collect_enemy_spawn_points()` 逻辑可复用）；
+8. 玩家出生点选"最开阔/最安全"的可走格（例如周围 3×3 全可走，且离边界 ≥ 2 格）。
+
+### 3.3 三条硬性校验（写代码时必须实现）
+
+1. **连通性**：铺完后对地板做 flood fill，玩家出生点与所有出怪点必须在同一连通域；不满足 → 换种子重新生成（最多重试 N 次，再失败就退回"空旷房间"保底布局）；
+2. **寻路时机**：`build()` 必须在"铺完瓦片之后、刷怪之前"。现有 `_ready()` 里的调用顺序需要调整（现在是先 build 再刷怪，地形是静态的；改成动态后顺序会变）；
+3. **出生点合法性**：沿用现有 `_warn_spawn_points_inside_walls()` 的思路，生成后自检一遍（落在墙里/越界就重新挑）。
+
+### 3.4 画布尺寸与难度
+
+- 默认保持 **38×24 格（608×384 px）**，和现在一致，摄像机/边界不用改；
+- 可选：按层数递增尺寸（例如每 3 层 +2 格宽），但要注意摄像机行为（当前是 `CameraSystem/Camera2D` + `RemoteTransform2D` 跟随玩家）。
+
+---
+
+## 4. 关卡目标系统（四种，统一数据驱动）
+
+把"过关条件"抽成数据，`Battle.gd` 只负责"检测 + 广播"，不关心是哪一种。
+
+### 4.1 目标类型
+
+| 类型 | 参数 | 胜利判定 | HUD |
+|---|---|---|---|
+| `SURVIVE_SECONDS` | `duration` | 倒计时归零 | 倒计时条（**现有实现，直接复用**） |
+| `KILL_COUNT` | `target_kills` | `round_kill_count >= target` | `击杀 12 / 30` |
+| `CLEAR_WAVES` | `waves[]`（每波敌人数/配置/间隔/是否精英） | 全部波次刷完 **且** 场上敌人为 0 | `剩余波次 2 / 3` |
+| `DEFEAT_BOSS` | `boss_config` | Boss 死亡 | Boss 血条 |
+| `REACH_EXIT` | `exit_cell` / `Area2D` | 玩家进入终点区域 | 终点指示箭头（可选，先不做） |
+
+### 4.2 统一规则
+
+- **失败** 永远只有一条：`player.hp <= 0`（沿用现有逻辑）；
+- **胜利** = 目标达成；
+- 可选 `time_limit`：作为**全局上限**，超时且未达成目标 = 失败（这样 `SURVIVE_SECONDS` 就是"time_limit 且目标为耗满时间"）；
+- 一关可配多个目标：需要 `mode = ALL | ANY`（**待你确认**，见第 9 节）。
+
+### 4.3 代码改动点
+
+- `game.gd::_check_game_result()` 是当前唯一胜负出口 → 抽为 `_evaluate_goals()`；
+- `game.gd::_on_enemy_died()` 已维护 `round_kill_count` → 保留，并额外广播信号给波次系统；
+- 新增 `WaveRunner`：把现在的"无限刷怪 + 随时间加速"改成"按波次表刷怪"（`CLEAR_WAVES` 用）；**现有加速逻辑保留给 `SURVIVE_SECONDS` 模式**；
+- 敌人配置从"随机挑一个"升级为"按波次表挑"（波次表里可指定敌人类型池与数量）。
+
+---
+
+## 5. NPC 对话系统
+
+### 5.1 数据（推荐 Resource，便于编辑器内维护与挂头像）
+
+```
+resources/dialogue/npc_smith.dialogue.tres        # DialogueData (Resource)
+├─ id: StringName
+├─ npc_name: String
+├─ avatar: Texture2D                              # 可为空
+├─ default_text_speed: float                      # 打字机速度（字/秒）
+└─ lines: Array[DialogueLine]
+     DialogueLine
+     ├─ speaker: StringName                       # 说话者（左上角名字）
+     ├─ portrait: Texture2D                       # 可为空
+     ├─ text: String
+     ├─ auto_advance: bool / pause: float         # 自动播放（关卡间剧情用）
+     └─ choices: Array[DialogueChoice]            # 分支选项（可空）
+          DialogueChoice { text: String, next_line_id: int, grant_pickup/开商店 等指令 }
+```
+
+> 备选：先用 JSON 跑通再升级。**建议直接上 Resource**：你后面要加头像/立绘，资源更顺。
+
+### 5.2 场景与交互
+
+- `Npc.tscn`
+  - `Area2D`（交互范围；建议新增物理层 **8 = `Interactable`**，或临时复用 `Pickup` 层）+ `CollisionShape2D`
+  - `Sprite2D`（**目前没有任何 NPC 美术素材**，先用 `icon.svg` / 纯色块占位）
+  - 头顶"按 E 对话"提示气泡：`body_entered / body_exited` 控制显隐
+- `DialogueBox.tscn`
+  - 底部对话框：`ColorRect/NinePatchRect` 底 + `Label`（或 `RichTextLabel`）
+  - 打字机：逐帧增加 `visible_characters`（比 `visible_ratio` 更精确，且能配 `text_speed`）
+  - 继续：`E` / 空格（对话中还能用 `ui_accept`）
+  - 选项：`ui_up/ui_down` 选择 + `E` 确认（Godot 内置 action，无需新增），鼠标点击也支持
+- `DialogueManager`（Autoload）
+  - `start(data: DialogueData, on_finished: Callable)`
+  - 信号：`dialogue_started` / `dialogue_line_changed` / `dialogue_finished`
+  - 免费复用：**关卡间剧情**用同一个组件，只是 `auto_advance = true` 且不锁玩家操作
+
+### 5.3 输入锁（重要）
+
+- 对话期间要锁住玩家移动/射击 → `player.gd` 新增 `set_input_enabled(enabled: bool)`；
+- **不要用 `get_tree().paused = true` 来做对话暂停**：现有结算逻辑用暂停，会把对话 UI 一起冻住（除非节点设 `process_mode = ALWAYS`）；
+- 建议：对话期间 = "锁玩家输入 + 可选锁敌人"，场景树保持运行。
+
+### 5.4 输入映射新增
+
+`project.godot` 需要新增（现在只有 move/shoot）：
+- `interact` → `E` / `回车`
+- `pause` → `ESC`（可选）
+
+---
+
+## 6. 商店与升级
+
+现有 3 种道具是**限时 buff**（`duration` 几秒），直接当商品会缺少"养成感"，所以分两类：
+
+| 类别 | 数据 | 说明 |
+|---|---|---|
+| **消耗品** | 沿用 `PickupConfig` | 商店花金币购买，立刻生效或存进 `RunState` 供下场使用 |
+| **长效升级** | 新增 `UpgradeConfig` (Resource) | 永久提升：`max_health +1`、移速 `+10%`、基础射速 `+10%`、无敌时间 `+0.2s`、开局自带 1 个道具…… 存 `RunState`，每场战斗开场应用到 Player |
+
+- **金币**：敌人掉落（可在 `EnemyConfig` 加 `gold_drop`）+ 过关奖励，存 `RunState.gold`；
+- **数值分层**（必须做，否则升级会污染 buff 计算）：
+  - `player.gd` 现在 `move_speed / fire_interval / max_health` 是 `@export` 基础值，道具用倍率盖在上面；
+  - 新增 `upgrade_move_speed_multiplier` / `upgrade_fire_rate_multiplier` / `bonus_max_health`，和现有 buff 倍率**相乘**即可，改动很小；
+- **商店形态**：建议"摊位 NPC + 对话式购买"，与第 5 节复用同一套 NPC/对话系统；若想更快，先做纯 UI 三选一（不进对话）。
+
+---
+
+## 7. 文件改动清单
+
+### 7.1 新增
+
+```
+docs/闯关与NPC对话系统设计方案.md   ← 本文件
+autoload/RunState.gd                # 整局状态（层数/金币/升级/进度），可存档
+autoload/GameFlow.gd                # 场景流程切换（title→map→battle→reward→map→end）
+autoload/DialogueManager.gd         # 对话驱动
+scene/map/MapScreen.tscn + MapScreen.gd    # 爬塔路线图 UI（UI 用代码生成）
+scene/map/RunMap.gd                 # 路线图随机生成（层数/节点类型/连线）
+scene/arena/ArenaGenerator.gd       # 程序化地形 + 出怪点 + 连通性校验
+scene/arena/LevelGoalDef.gd         # 目标数据（按 type 枚举驱动）
+scene/battle/Battle.tscn + Battle.gd  # 由 game.tscn 抽出的单场战斗
+scene/battle/WaveRunner.gd          # 波次调度（CLEAR_WAVES）
+scene/reward/RewardScreen.gd        # 本关成绩 + 商店/三选一升级
+scene/dialogue/DialogueBox.gd       # 底部对话框 + 打字机 + 选项
+scene/dialogue/Npc.tscn + Npc.gd    # 地图上的可交互 NPC
+resources/dialogue/*.tres           # 对话数据（含占位剧本）
+resources/upgrade/*.tres            # 长效升级数据
+```
+
+### 7.2 修改
+
+```
+project.godot          # 新增 [autoload]（RunState / GameFlow / DialogueManager）
+                       # 新增 input：interact(E/回车)、pause(ESC，可选)
+                       # 新增物理层 8 = Interactable
+scene/game.gd          # 胜负判定抽成目标系统；刷怪抽出（保留经典模式可玩）
+scene/player.gd        # set_input_enabled()；基础值/升级加成/道具 buff 三层数值；apply_upgrade()
+scene/title.gd         # 新增「开始新局 → MapScreen」「经典模式 → game.tscn」
+scene/round_records.gd # 战绩增加字段：到达层数、总击杀、是否通关（保持向后兼容：旧档缺字段用默认值）
+scene/enemy.gd         # 可选：金币掉落
+```
+
+### 7.3 不动的东西（保证回退）
+
+`scene/player.tscn`、`scene/enemy.tscn`、`scene/bullet.*`、`scene/pickup.*`、`resources/texture|audio|font`、`blink.gdshader`、`enemy_pathfinder.gd`（只改调用时机，不改内部算法）。
+
+---
+
+## 8. 风险与对策
+
+| 风险 | 说明 | 对策 |
+|---|---|---|
+| 寻路卡死 | 程序化地形后 `EnemyPathfinder` 必须在铺完瓦片后重建，顺序错会导致敌人集体撞墙 | 生成器输出"生成完成"信号，Battle 里严格按 `生成地形 → build → 刷怪` 顺序；开机自检 `pathfinder.is_usable()` |
+| 不连通地图 | 随机地形可能出现敌人被困在孤岛 | flood fill 校验 + 换种子重试 + 空旷房间保底 |
+| `.tscn` 手写风险 | 场景文件是文本但格式敏感（`tile_map_data` 还是二进制） | UI 全部代码生成；尽量少新增 `.tscn`；新增文件独立，不改老场景 |
+| autoload 引入 | 项目当前 0 autoload，加 autoload 需要改 `project.godot` | 只在 `project.godot` 追加 `[autoload]` 段，不动其它设置；先在编辑器里确认能正常启动 |
+| 数值被 buff 污染 | 升级与限时 buff 都改同一批变量 | 数值分三层：`基础值 × 升级加成 × 道具 buff` |
+| 暂停与 UI 冲突 | 现有结算用 `Engine.time_scale=0 + paused`，对话若照抄会冻住 UI | 对话不暂停场景树，只锁输入 |
+| 无美术素材 | 没有 NPC 立绘/新敌人素材 | 先生成占位（色块 + 名字），后期替换资源即可 |
+
+---
+
+## 9. 需求确认结果（2026-09-27 已确认，原"开放项"已全部关闭）
+
+| # | 问题 | 你的决定 | 对方案的影响 |
+|---|---|---|---|
+| 1 | NPC 美术 | **用 `resources/texture/源石虫.png` 里的敌人图**（无独立立绘素材） | 需要确认该图的帧布局（疑为敌人行走 sprite sheet）→ 可能只能裁切其中一帧作头像，或整图缩放当立绘（待我看图后确认） |
+| 2 | 对话文本 | **先用占位符** | `DialogueData` 里全部填 `【占位】…`，结构完整、文案后续替换 |
+| 3 | 金币来源 | **只由敌人掉落** | `EnemyConfig` 新增 `gold_drop_min / gold_drop_max`（或掉落物形式），不做"过关奖励金币" |
+| 4 | 多目标语义 | **`ALL`：一关所有目标必须全部达成才能通过** | `LevelGoalDef.mode = ALL`；倒计时若要当"上限"，另用 `time_limit`（超时判负），不与其他目标混算 |
+| 5 | 备份 / 版本控制 | **已自行 git 过** | 我动手前会先 `git status` 确认干净，每个里程碑提交一次，便于回退 |
+| 6 | 老 `game.tscn` | **保留为"经典模式"入口** | 新流程走 `Battle.tscn`，`title.tscn` 增加「经典模式」按钮；稳定后再决定是否换默认入口 |
+
+### 9.1 因上述决定而明确的两条实现约束
+
+- **NPC 交互节点**：因为不新增美术资源，`Npc.tscn` 直接复用敌人的 `AnimatedSprite2D`/`SpriteFrames` 资源（或从 `源石虫.png` 裁一帧），头顶"按 E 对话"用纯文字/`Label` 表现，不画图标。
+- **金币系统**：金币只从敌人身上掉 → 需要把"掉落"从现在的"概率掉道具"扩展成"金币 + 道具"两种掉落；金币 HUD 放在现有 `Player/HUDLayer` 下（与 `LifeIcon`、`TimeIcon` 同级）。
+
+## 9.0 原始开放项（已作废，留档）
+
+1. **NPC 美术**：有立绘/头像吗？没有的话我用"名字标签 + 对话框"纯文字（不画图）。
+2. **对话文本**：你自己写，还是我先写一版占位剧本（每个 NPC 3~5 句）？
+3. **商店/升级**：确认要做吗？做的话金币来源用"敌人掉落"还是"过关奖励"（或两者）？
+4. **多目标语义**：一关配多个目标时是 `ALL`（全部达成才算赢）还是 `ANY`（任一达成）？倒计时当"上限（超时判负）"还是"目标本身"？
+5. **备份**：动手前先 `git init` 还是复制一份 `My Game_backup`？（项目当前无版本控制）
+6. **经典模式**：老 `game.tscn` 单关玩法保留为入口，还是新流程稳定后直接替换？
+
+---
+
+## 10. 建议实施顺序（每步都可单独验收）
+
+| 里程碑 | 内容 | 验收方式 |
+|---|---|---|
+| **M0** | `RunState` + `GameFlow` + `project.godot`（autoload/输入/物理层）跑通 `title → map → battle → map` 空流程 | 能来回切场景，老玩法不受影响 |
+| **M1** | `ArenaGenerator` 程序化地形 + 寻路重建 + 动态出怪点（先只用倒计时目标） | 每局地形不同、敌人能绕过墙找到玩家 |
+| **M2** | 四种目标数据化 + HUD 进度 + 胜负判定（含波次系统） | 每种目标都能正确判胜/判负 |
+| **M3** | `RunMap` + `MapScreen`（节点类型、分支、精英/Boss/商店/事件） | 能选节点、层数推进、路线不重复 |
+| **M4** | `DialogueBox` + `Npc` + `DialogueManager` + E 键交互（打字机、选项） | 靠近 NPC 按 E 能对话，选项能分叉 |
+| **M5** | 商店/升级 + 金币 + `RunState` 应用 | 买了升级下场战斗生效 |
+| **M6** | 结算/存档扩展、Boss、平衡、导出 exe | 完整通关一局并留下战绩 |
+
+---
+
+## 附：本次未做的事
+
+- **没有配置任何 MCP**（`User\mcp.json` 不存在，工作区无 `.vscode\mcp.json`）；
+- 本会话的 `bash` 工具不可用（`C:\Program Files\Git\bin\bash.exe` 不存在），因此无法执行 `npx`/`pip`/Godot headless；
+- 因你选择"只出方案"，本次**未修改任何游戏代码或场景**，只新增本文件。

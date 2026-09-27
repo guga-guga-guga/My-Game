@@ -4,7 +4,9 @@ const RESULT_TITLE_WIN := "你赢了"
 const RESULT_TITLE_LOSE := "你输了"
 const RESULT_MESSAGE_WIN := "你成功存活到了最后"
 const RESULT_MESSAGE_LOSE := "玩家生命值已归零"
-const RESULT_OK_BUTTON_TEXT := "结束游戏"
+const RESULT_OK_BUTTON_TEXT := "返回标题"
+#结算后回到开始界面，而不是直接退出游戏
+const TITLE_SCENE_PATH := "res://scene/title.tscn"
 
 
 #默认敌人场景与四种敌人配置资源
@@ -29,11 +31,11 @@ var spawn_count_per_tick: int = 1
 #关卡后期允许缩短到的最小刷怪间隔。
 @export_range(0.1,60.0, 0.1, "or_greater") var min_spawn_interval: float = 0.6
 #场上允许同时存在的最大敌人数，避免无限堆积。
-@export_range(1, 200, 1, "or_greater") var max_alive_enemies: int = 12
+@export_range(1, 200, 1, "or_greater") var max_alive_enemies: int = 24
 
 @export_group("关卡 UI")
 # 关卡倒计时总时长，单位为秒
-@export_range(1.0, 3600.0, 1.0, "or_greater") var stage_duration: float = 60.0
+@export_range(1.0, 3600.0, 1.0, "or_greater") var stage_duration: float = 120.0
 
 
 #主场景中的核心引用。
@@ -74,6 +76,8 @@ var time_bar_left_edge_x: float = 0.0
 var time_bar_texture_width: float = 0.0
 #是否已经进入了结束状态，避免重复弹出结果窗口
 var is_result_displayed: bool = false
+#本局击杀的敌人数，由敌人的 died 信号累加
+var round_kill_count: int = 0
 
 
 
@@ -82,7 +86,9 @@ func _ready() -> void:
 	random_generator.randomize()
 	_configure_result_dialog()
 	_setup_hud()
+	_setup_enemy_pathfinder()
 	_collect_enemy_spawn_points()
+	_warn_spawn_points_inside_walls()
 	_collect_enemy_configs()
 	_configure_enemy_spawn_timer()
 	_spawn_initial_enemies()
@@ -175,6 +181,8 @@ func _show_result_dialog(result_title: String, result_message: String) -> void:
 	if is_result_displayed:
 		return
 	is_result_displayed = true
+	#先把本局战绩写进存档，再冻结世界（结算界面要用到本局数据）
+	_record_round_result(result_title == RESULT_TITLE_WIN)
 	result_dialog.title = result_title
 	result_dialog.dialog_text = result_message
 	_stop_world()
@@ -208,9 +216,27 @@ func _play_sfx(audio_player: AudioStreamPlayer) -> void:
 	audio_player.stop()
 	audio_player.play()
 
-# 结算窗口的所有关闭路径都统一结束游戏，保持单局流程最简。
+# 结算窗口的所有关闭路径都统一回到开始界面。
 func _on_result_dialog_exit_requested() -> void:
-	get_tree().quit()
+	#先恢复结算时冻结的世界，否则切过去的开始界面会卡死、按钮点不动
+	Engine.time_scale = 1.0
+	get_tree().paused = false
+	get_tree().change_scene_to_file(TITLE_SCENE_PATH)
+
+
+#本局已经存活了多久（秒）。胜利时倒计时正好走完，失败时是实际坚持到的时长。
+func _get_round_elapsed_time() -> float:
+	return clampf(stage_duration - stage_time_left, 0.0, maxf(stage_duration, 0.0))
+
+
+#结算时把本局战绩写进存档，开始界面会读取它并显示最近 10 局。
+func _record_round_result(won: bool) -> void:
+	RoundRecords.add_record(_get_round_elapsed_time(), round_kill_count, won)
+
+
+#敌人死亡信号回调：本局击杀数 +1
+func _on_enemy_died() -> void:
+	round_kill_count += 1
 
 # 通过玩家对外暴露的接口读取当前生命值，避免Game 直接依赖玩家内部变量。
 func _get_player_current_health() -> int:
@@ -314,6 +340,8 @@ func _try_spawn_enemy() -> bool:
 	enemy_container.add_child(enemy_instance)
 	enemy_instance.global_position = spawn_point.global_position
 	enemy_instance.setup(enemy_cfg, player)
+	#接上死亡信号，用于统计本局击杀数
+	enemy_instance.died.connect(_on_enemy_died)
 	
 	return true
 	
@@ -350,3 +378,66 @@ func _get_alive_enemy_count() -> int:
 			alive_enemy_count += 1
 	
 	return alive_enemy_count
+
+
+#扫描场景里的 TileMapLayer，在运行时构建敌人寻路网格；必须在刷怪之前调用。
+func _setup_enemy_pathfinder() -> void:
+	var tile_map_layers: Array[TileMapLayer] = []
+	for child in get_children():
+		var tile_map_layer := child as TileMapLayer
+		if tile_map_layer != null:
+			tile_map_layers.append(tile_map_layer)
+	
+	if tile_map_layers.is_empty():
+		push_warning("Game: 场景里没有 TileMapLayer，敌人将退化为直线追踪")
+		# [临时调试] 已注释，需要时取消注释
+		#print("[寻路调试] 没有找到任何 TileMapLayer，寻路被跳过，敌人走直线")
+		return
+	
+	var pathfinder := EnemyPathfinder.new()
+	pathfinder.name = "EnemyPathfinder"
+	add_child(pathfinder)
+	pathfinder.build(tile_map_layers)
+	
+	# [临时调试] 已注释，需要时取消注释
+	#var layer_names := ""
+	#for tile_map_layer in tile_map_layers:
+	#	layer_names += String(tile_map_layer.name) + " "
+	#print("[寻路调试] 找到图层数=%d（%s）网格可用=%s %s" % [
+	#	tile_map_layers.size(),
+	#	layer_names,
+	#	pathfinder.is_usable(),
+	#	pathfinder.debug_summary(),
+	#])
+	#print(pathfinder.debug_ascii_map())
+
+
+#诊断辅助：检查出生点是否落在墙体格或地图之外，避免敌人一出生就卡住。
+func _warn_spawn_points_inside_walls() -> void:
+	var pathfinder := EnemyPathfinder.instance
+	# [临时调试] 已注释，需要时取消注释：实例取不到时改用分组查找，保证诊断不会静默失败。
+	if pathfinder == null:
+		#print("[寻路调试] EnemyPathfinder.instance 为 null，改用分组查找")
+		pathfinder = get_tree().get_first_node_in_group(EnemyPathfinder.PATHFINDER_GROUP) as EnemyPathfinder
+	if pathfinder == null or not pathfinder.is_usable():
+		#print("[寻路调试] 拿不到可用的寻路器，跳过出生点检查")
+		return
+	
+	for spawn_point in enemy_spawn_points:
+		var cell := pathfinder.world_to_cell(spawn_point.global_position)
+		var problem := ""
+		if not pathfinder.is_cell_inside_map(cell):
+			problem = "落在地图范围之外"
+		elif pathfinder.is_cell_solid(cell):
+			problem = "落在墙体格子上"
+		# [临时调试] 已注释，需要时取消注释
+		#print("[寻路调试] 出生点 %s 世界坐标=%s 格子=%s 在网格范围内=%s 是墙体=%s" % [
+		#	spawn_point.name,
+		#	spawn_point.global_position,
+		#	cell,
+		#	pathfinder.is_cell_inside_map(cell),
+		#	pathfinder.is_cell_solid(cell),
+		#])
+		if problem.is_empty():
+			continue
+		push_warning("出生点 %s 位于格子 %s，%s，敌人可能一出生就卡住" % [spawn_point.name, cell, problem])
