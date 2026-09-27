@@ -5,6 +5,8 @@ const WORLD_COLLISION_MASK := 1
 
 @export var speed:float = 320.0
 @export var max_lifetime: float = 2.0
+## 伤害值（由商店升级决定）
+@export var damage: int = 1
 
 var direction: Vector2 = Vector2.RIGHT
 var remaining_lifetime: float = 0.0

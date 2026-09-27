@@ -216,6 +216,7 @@ func _spawn_bullet(shoot_direction: Vector2) -> bool:
 		return false
 		
 	bullet.top_level = true
+	bullet.damage = RunState.get_player_damage()
 	bullet.setup(shoot_direction)
 	
 	#将子弹挂在当前主场景下，避免跟随玩家一起移动
