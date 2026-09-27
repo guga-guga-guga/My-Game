@@ -5,6 +5,8 @@ extends Control
 ## M3 会把 DEMO_NODES 换成 RunMap 生成的随机路线图，并让节点类型决定关卡目标
 ## UI 全部由代码生成 沿用 title.gd 的既有约定 ，所以 .tscn 里只有一个 Control 根节点
 
+const LevelGoalScript = preload("res://scene/battle/level_goal.gd")
+
 const COLOR_BACKGROUND := Color(0.0588, 0.0588, 0.0588)
 const COLOR_TITLE := Color(1.0, 0.87, 0.55)
 const COLOR_TEXT := Color(0.85, 0.85, 0.85)
@@ -16,11 +18,6 @@ const FONT_SIZE_BODY := 16
 const FONT_SIZE_SMALL := 14
 
 ## M0 临时:本层固定展示 3 个节点M3 由 RunMap 随机生成
-const DEMO_NODES := [
-	{"type": "battle", "label": "战斗"},
-	{"type": "elite", "label": "精英"},
-	{"type": "shop", "label": "商店"},
-]
 
 var _status_label: Label
 
@@ -62,11 +59,16 @@ func _build_ui() -> void:
 	node_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	node_row.add_theme_constant_override("separation", 12)
 	box.add_child(node_row)
-	for node_data in DEMO_NODES:
+	var floor_nodes := _current_floor_nodes()
+	for node_data in floor_nodes:
 		var node_type := String(node_data.get("type", ""))
-		var node_button := _make_button(String(node_data.get("label", "?")), "Node_" + node_type)
+		var node_label := String(node_data.get("label", "?"))
+		var goal_text := "用金币买升级" if node_type == "shop" else LevelGoalScript.short_label(LevelGoalScript.build(RunState.floor_index, node_type))
+		var node_button := _make_button("%s
+%s" % [node_label, goal_text], "Node_" + node_type)
 		node_button.pressed.connect(_on_node_pressed.bind(node_type))
 		node_row.add_child(node_button)
+	print("[MapScreen] 第 %d 层可选节点: %s" % [RunState.floor_index, str(floor_nodes)])
 
 	box.add_child(_make_spacer(10))
 	var debug_button := _make_button("调试: 模拟过关 到 下一层", "DebugAdvanceButton")
@@ -144,3 +146,23 @@ func _make_spacer(height: int) -> Control:
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, height)
 	return spacer
+
+## 本层可选的路线节点：
+##   最终层（第 MAX_FLOOR 层）只出 Boss；其余层从 战斗/精英/商店 里随机 2~3 个。
+##   用层数播种，保证"返回路线图再进来"看到的节点不变。
+func _current_floor_nodes() -> Array:
+	if RunState.is_final_floor():
+		return [{"type": "boss", "label": "BOSS"}]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = RunState.floor_index * 7919
+	var pool := [
+		{"type": "battle", "label": "战斗"},
+		{"type": "battle", "label": "战斗"},
+		{"type": "elite", "label": "精英"},
+		{"type": "shop", "label": "商店"},
+	]
+	var count := rng.randi_range(2, 3)
+	var picked: Array = []
+	for _index in range(count):
+		picked.append(pool[rng.randi_range(0, pool.size() - 1)])
+	return picked
