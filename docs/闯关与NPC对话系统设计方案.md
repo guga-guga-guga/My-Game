@@ -641,3 +641,22 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
    变成"打不动的磨血"。所以金币/只 1 -> 2。
 3. **精英关实际时长 = 限时**（它是"击杀 + 撑满"两条全达成），不是击杀所需时间。
    报告里原来那列按击杀时间算，是错的。
+
+## 18. Bug 修复：Hub 里生命值永远显示 X3（2026-09-27 用户发现）
+
+**现象**：在中间地图（Hub）里生命值一直是 `X 3`，商店买了 +1 生命也不变。
+
+**原因**（两层）：
+1. Hub 从没把 `RunState` 的生命值同步到玩家节点上 —— 玩家节点一直用场景默认的 3
+2. 刷新 HUD 文本的 `_update_life_count_label()` 写在战斗场景的 `game.gd` 里，
+   Hub 用的是自己的 `hub.gd`，**没人刷这个标签**，所以即使值对了标签也不会变
+
+**修复**：
+- `RunState` 新增 `health_changed(current, maximum)` 信号，`buy_max_health()` / `set_health()` 里发
+- `hub.gd` 新增 `_sync_player_health()`：同步玩家节点 + 刷新 `LifeCountLabel` 文本（格式 `X %d`），
+  并在 `_ready` 和 `health_changed` 时调用
+- `battle.gd` 也接上 `health_changed`（同一次冒险里买血后进战斗更稳）
+- Hub 新增调试开关 `debug_start_health`（预支生命，专门测这个 HUD）
+
+**自检**：`tools/test_hub_health.tscn` 6 项 —— 玩家身上生命 = 整局、HUD 文本正确、
+商店买 +1 立刻变、跨关卡残血（剩 2）正确显示。

@@ -20,6 +20,8 @@ const LevelReportScript = preload("res://scene/hub/level_report.gd")
 @export var debug_dialogue_kind: String = ""
 ## 调试：进入 Hub 时预支多少金币（单独测商店用；0 = 不预支）
 @export var debug_start_gold: int = 0
+## 调试：进入 Hub 时预支多少生命上限（测生命 HUD 用；0 = 不预支）
+@export var debug_start_health: int = 0
 ## 调试：进入 Hub 时强制层数（测最终层的 BOSS 位置用；0 = 用真实层数）
 @export var debug_floor: int = 0
 
@@ -54,6 +56,11 @@ func _ready() -> void:
 	if debug_start_gold > 0:
 		RunState.add_gold(debug_start_gold)
 		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
+	for _index in range(maxi(debug_start_health, 0)):
+		RunState.buy_max_health()
+	if debug_start_health > 0:
+		print("[Hub] 调试: 预支生命 +%d -> 当前 %d/%d" % [
+			debug_start_health, RunState.current_health, RunState.max_health])
 	var use_seed := arena_seed if arena_seed != 0 else randi()
 	var generator = ArenaGen.new()
 	# Hub 很小（默认 12x6），生成器有 24x16 的下限，所以这里直接铺一张干净的小房间
@@ -64,6 +71,12 @@ func _ready() -> void:
 	# 玩家出生点放在"最下面一排的中间"，三个角色在上排 —— 12x6 很小，必须拉开否则一出生就同时靠近多个角色
 	var spawn_cell := _nearest_floor(Vector2i(int(floor(float(arena_data["width"]) / 2.0)), int(arena_data["height"]) - 2))
 	_player.global_position = _cell_center(spawn_cell)
+
+	# 生命值跨关卡保留：整局状态里的血要同步到玩家节点上，
+	# 否则 HUD 显示的是场景默认的 3（玩家在商店买 +1 生命也不会变）
+	_sync_player_health()
+	if not RunState.health_changed.is_connected(_on_run_state_health_changed):
+		RunState.health_changed.connect(_on_run_state_health_changed)
 
 	# HUD：Hub 没有时间限制 → 删掉时钟与绿条，生命值上移一行（沿用 M3 定的规则）
 	_apply_hub_hud_layout()
@@ -213,6 +226,7 @@ func _setup_gold_hud() -> void:
 	_refresh_gold_hud()
 	print("[Hub] 金币 HUD 就绪: %s" % _gold_hud.text)
 	_check_gold_hud_rect.call_deferred()
+	_check_health_sync.call_deferred()
 
 
 ## 自检：金币 HUD 是否完整落在屏幕内（右上角留 16px 边距）
@@ -228,6 +242,31 @@ func _check_gold_hud_rect() -> void:
 
 func _on_gold_changed(_amount: int) -> void:
 	_refresh_gold_hud()
+
+
+func _on_run_state_health_changed(_current: int, _maximum: int) -> void:
+	_sync_player_health()          # 商店买 +1 生命后，Hub 的 HUD 要立刻跟着变
+
+
+## 把整局状态的生命值同步到玩家节点 + 刷新 HUD 文本
+## （刷新标签的 _update_life_count_label() 在战斗场景的 game.gd 里，
+##   Hub 是自己的脚本，不刷的话标签会一直停在场景默认值 "X 3"）
+func _sync_player_health() -> void:
+	if _player == null:
+		return
+	_player.max_health = maxi(RunState.max_health, 1)
+	_player.current_health = clampi(RunState.current_health, 1, _player.max_health)
+	var label := $Player/HUDLayer/LifeCountLabel as Label
+	if label != null:
+		label.text = "X %d" % _player.current_health
+
+
+## 自检：玩家身上的血 & HUD 文本是否和整局状态一致（deferred，等 HUD 刷过一帧）
+func _check_health_sync() -> void:
+	var label := $Player/HUDLayer/LifeCountLabel as Label
+	print("[Hub自检] 生命: 玩家 %d/%d  HUD文本=%s  整局 %d/%d" % [
+		_player.current_health, _player.max_health,
+		label.text if label != null else "?", RunState.current_health, RunState.max_health])
 
 
 func _refresh_gold_hud() -> void:

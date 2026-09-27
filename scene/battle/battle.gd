@@ -147,6 +147,14 @@ func _boss_config_for_floor() -> EnemyConfig:
 	return copy
 
 
+## 整局生命值变化时（例如商店买血）同步到玩家节点
+func _on_run_state_health_changed(current: int, maximum: int) -> void:
+	if player == null:
+		return
+	player.max_health = maxi(maximum, 1)
+	player.current_health = clampi(current, 1, player.max_health)
+
+
 func _context_floor() -> int:
 	if GameFlow != null:
 		return int(GameFlow.pending_battle.get("floor", RunState.floor_index))
@@ -260,6 +268,8 @@ func _apply_run_state_to_player() -> void:
 	player.max_health = RunState.max_health
 	player.current_health = clampi(RunState.current_health, 1, RunState.max_health)
 	player.fire_interval = RunState.get_player_fire_interval()
+	if not RunState.health_changed.is_connected(_on_run_state_health_changed):
+		RunState.health_changed.connect(_on_run_state_health_changed)
 	if debug_print:
 		print("[Battle] 进场: 生命 %d/%d 子弹伤害 %d 射击间隔 %.3f 金币 %d" % [
 			player.current_health, player.max_health, RunState.get_player_damage(),
