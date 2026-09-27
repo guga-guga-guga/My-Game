@@ -56,12 +56,8 @@ func setup(p_kind: String, p_title: String, frames: SpriteFrames, tint: Color, p
 	body_exited.connect(_on_body_exited)
 
 
-func _physics_process(_delta: float) -> void:
-	if not _in_range:
-		return
-	if Input.is_action_just_pressed("interact"):
-		# M4-3 会在这里弹出对话框；现在先打印，便于验证交互链路
-		print("[Hub] 与 [%s] 交互（下一步：弹对话框）" % title)
+func is_player_in_range() -> bool:
+	return _in_range
 
 
 func _on_body_entered(body: Node2D) -> void:

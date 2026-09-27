@@ -5,12 +5,15 @@ extends Node2D
 
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const NpcScript = preload("res://scene/hub/npc.gd")
+const DialogueBoxScript = preload("res://scene/hub/dialogue_box.gd")
 
 @export_group("场地")
 @export var arena_width: int = 12
 @export var arena_height: int = 6
 ## 0 = 每次随机；填数字可复现
 @export var arena_seed: int = 0
+## 调试：自动打开第一个角色的对话框并在 1.2 秒后自动选"进入"（headless 验证用）
+@export var debug_dialogue_test: bool = false
 
 ## 3 个固定位置（相对地图中心的格偏移）
 const SLOT_OFFSETS: Array[Vector2i] = [Vector2i(-4, -2), Vector2i(0, -2), Vector2i(4, -2)]
@@ -23,6 +26,8 @@ const KIND_COLORS := {
 var arena_data: Dictionary = {}
 var npcs: Array = []
 var _player: Player = null
+var _dialogue = null
+var _active_npc = null
 
 
 func _ready() -> void:
@@ -41,6 +46,11 @@ func _ready() -> void:
 	_apply_hub_hud_layout()
 
 	_spawn_npcs()
+	_setup_dialogue()
+	if debug_dialogue_test:
+		_start_debug_dialogue_test()
+	if debug_dialogue_test:
+		print("[Hub] 调试: 已开启自动对话测试")
 	print("[Hub] 第 %d 层中间地图 seed=%d 场地 %dx%d 角色=%s" % [
 		RunState.floor_index, use_seed, arena_data["width"], arena_data["height"], str(npcs.map(
 			func(npc) -> String: return npc.title))])
@@ -186,3 +196,89 @@ func _set_npc_look(npc: Node, frames: SpriteFrames, tint: Color) -> void:
 	if prompt != null:
 		prompt.text = "%s
 按 E 交互" % String(npc.title)
+
+# ---------------- 交互与对话框（M4-3） ----------------
+
+func _setup_dialogue() -> void:
+	_dialogue = DialogueBoxScript.new()
+	add_child(_dialogue)
+	_dialogue.option_selected.connect(_on_dialogue_option)
+	_dialogue.closed.connect(_on_dialogue_closed)
+
+
+func _physics_process(_delta: float) -> void:
+	if _dialogue != null and _dialogue.is_open():
+		return
+	if Input.is_action_just_pressed("interact"):
+		var npc = _nearest_npc_in_range()
+		if npc != null:
+			_open_npc_dialogue(npc)
+
+
+## 取"距离玩家最近且在交互范围内"的角色（12x6 图很小，可能同时有两个在范围内）
+func _nearest_npc_in_range() -> Node:
+	var best: Node = null
+	var best_distance := INF
+	for npc in npcs:
+		if not npc.is_player_in_range():
+			continue
+		var distance: float = _player.global_position.distance_to(npc.global_position)
+		if distance < best_distance:
+			best_distance = distance
+			best = npc
+	return best
+
+
+func _open_npc_dialogue(npc: Node) -> void:
+	_active_npc = npc
+	if _player != null:
+		_player.set_physics_process(false)      # 对话期间玩家不能走动
+	var body := "要进入这里吗？"
+	if npc.kind == "shop":
+		body = "要进来看看货吗？"
+	_dialogue.show_dialogue(npc.title, [body], ["进入", "取消"])
+	print("[Hub] 对话打开: %s" % npc.title)
+
+
+func _on_dialogue_option(index: int) -> void:
+	var kind := String(_active_npc.kind) if _active_npc != null else ""
+	if index != 0 or kind.is_empty():
+		print("[Hub] 选择了取消")
+		return
+	if kind == "shop":
+		print("[Hub] 商店界面还没做（M4-4）")     # M4-4 接商店
+		return
+	print("[Hub] 进入关卡: %s（第 %d 层）" % [kind, RunState.floor_index])
+	GameFlow.start_battle({"floor": RunState.floor_index, "node_type": kind})
+
+
+func _on_dialogue_closed() -> void:
+	if _player != null:
+		_player.set_physics_process(true)
+	_active_npc = null
+
+## 调试链：0.6 秒后对第一个角色开对话，1.4 秒后自动选「进入」
+func _start_debug_dialogue_test() -> void:
+	var t1 := Timer.new()
+	t1.wait_time = 0.6
+	t1.one_shot = true
+	t1.timeout.connect(_debug_open_first_npc)
+	add_child(t1)
+	t1.start()
+	var t2 := Timer.new()
+	t2.wait_time = 1.4
+	t2.one_shot = true
+	t2.timeout.connect(_debug_pick_enter)
+	add_child(t2)
+	t2.start()
+
+
+func _debug_open_first_npc() -> void:
+	print("[Hub] 调试: 打开第一个角色的对话")
+	if npcs.size() > 0:
+		_open_npc_dialogue(npcs[0])
+
+
+func _debug_pick_enter() -> void:
+	print("[Hub] 调试: 自动选择第一个选项（进入）")
+	_on_dialogue_option(0)
