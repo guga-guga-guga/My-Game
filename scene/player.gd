@@ -138,12 +138,12 @@ func apply_damage(amount: int) -> bool:
 func get_current_health() -> int:
 	return current_health
 
-#尝试发射子弹：检查冷却-判断发射模式-发射
+#尝试发射子弹:检查冷却-判断发射模式-发射
 func _try_shoot(shoot_input: Vector2) -> void:
 	if not shooting_timer.is_stopped():
 		return
 	if shoot_input == Vector2.ZERO:
-		print("警告：射击输入为零向量")
+		print("警告:射击输入为零向量")
 		return
 	
 	var shoot_direction := shoot_input.normalized()
@@ -380,7 +380,7 @@ func stop_runtime_audio() -> void:
 		pickup_sfx_player.stop()
 	
 
-# 根据移动状态启停移动音效。
+# 根据移动状态启停移动音效
 func _set_move_sfx_active(active: bool) -> void:
 	if move_sfx_player == null or move_sfx_player.stream == null:
 		return
@@ -391,7 +391,7 @@ func _set_move_sfx_active(active: bool) -> void:
 	if move_sfx_player.playing:
 		move_sfx_player.stop()
 
-# 一次性音效统一使用重播逻辑，避免快速触发时无法从头开始。
+# 一次性音效统一使用重播逻辑，避免快速触发时无法从头开始
 func _play_sfx(audio_player: AudioStreamPlayer) -> void:
 	if audio_player == null or audio_player.stream == null:
 		return
