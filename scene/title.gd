@@ -28,7 +28,7 @@ const TITLE_BUTTON_BOTTOM_MARGIN := 36.0
 const CUSTOM_FONT: Font = null
 
 var _records_panel: PanelContainer = null
-var _button_bar: HBoxContainer = null
+var _button_bar: VBoxContainer = null
 
 const TITLE_TEXT := "唯时代尔"
 const DESCRIPTION_TEXT := "操作说明\nWASD 移动 ， 方向键射击\n\n撑满倒计时即通关，活得越久，杀得越多越好"
@@ -57,23 +57,27 @@ func _ready() -> void:
 #   中部     标题 + 操作说明
 #   中间下方  一整排按钮
 #   右侧     最近战绩
+#代码生成整个界面（用户定的排版）:
+#   中部      标题 + 操作说明
+#   中间下方   原来的按钮竖排，整组下移（用户要求：保持原排列，只下移）
+#   右侧靠下   最近战绩（半透明底，不带边框）
 func _build_ui() -> void:
 	_add_background()
 
-	# ---- 中部:标题 + 操作说明 ----
+	# ---- 中部:标题 + 操作说明（比正中间略上，给下面的按钮组让位）----
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_theme_constant_override("separation", 8)
-	box.offset_bottom = -150.0            # 视觉中心略上移，给底部按钮排留位置
+	box.offset_bottom = -120.0
 	add_child(box)
 
 	if SHOW_TITLE_TEXT:
 		box.add_child(_make_label(TITLE_TEXT, FONT_SIZE_TITLE, COLOR_TITLE))
 	box.add_child(_make_label(DESCRIPTION_TEXT, FONT_SIZE_BODY, COLOR_TEXT))
 
-	# ---- 中间下方:一整排按钮 ----
-	_button_bar = HBoxContainer.new()
+	# ---- 中间下方:原来的四个按钮竖排，整组贴在下方（只下移，不改成横排）----
+	_button_bar = VBoxContainer.new()
 	_button_bar.name = "ButtonBar"
 	_button_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_button_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -81,8 +85,7 @@ func _build_ui() -> void:
 	_button_bar.offset_right = 0.0
 	_button_bar.offset_top = -TITLE_BUTTON_BOTTOM_MARGIN
 	_button_bar.offset_bottom = -TITLE_BUTTON_BOTTOM_MARGIN
-	_button_bar.alignment = BoxContainer.ALIGNMENT_CENTER
-	_button_bar.add_theme_constant_override("separation", 16)
+	_button_bar.add_theme_constant_override("separation", 8)
 	add_child(_button_bar)
 
 	var run_button := _make_button("开始新局，闯关", "StartRunButton")
@@ -101,7 +104,7 @@ func _build_ui() -> void:
 	quit_button.pressed.connect(_on_quit_button_pressed)
 	_button_bar.add_child(quit_button)
 
-	# ---- 右侧:最近战绩 ----
+	# ---- 右侧靠下:最近战绩 ----
 	_build_records_panel()
 
 	#让键盘 / 手柄也能直接开始:内置动作 ui_accept 回车，空格 会触发当前聚焦的按钮
@@ -109,23 +112,22 @@ func _build_ui() -> void:
 	_check_title_layout.call_deferred()
 
 
+
 #右侧战绩面板（用户要求：战绩放在界面右侧）
 func _build_records_panel() -> void:
 	_records_panel = PanelContainer.new()
 	_records_panel.name = "RecordsPanel"
-	_records_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_records_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_records_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_records_panel.grow_vertical = Control.GROW_DIRECTION_END
+	_records_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN     # 内容多了往上长
 	_records_panel.offset_left = -RECORDS_PANEL_WIDTH
 	_records_panel.offset_right = -RECORDS_PANEL_MARGIN
-	_records_panel.offset_top = RECORDS_PANEL_MARGIN
-	_records_panel.offset_bottom = RECORDS_PANEL_MARGIN
+	_records_panel.offset_top = -RECORDS_PANEL_MARGIN
+	_records_panel.offset_bottom = -RECORDS_PANEL_MARGIN
 	add_child(_records_panel)
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.05, 0.05, 0.06, 0.72)
-	style.border_color = Color(1.0, 0.87, 0.55, 0.55)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(6)
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.55)                     # 只要半透明底，不要金边
+	style.set_corner_radius_all(4)
 	style.set_content_margin_all(12)
 	_records_panel.add_theme_stylebox_override("panel", style)
 
@@ -144,19 +146,25 @@ func _check_title_layout() -> void:
 	var screen := Vector2(get_viewport().get_visible_rect().size)
 	var panel := _records_panel.get_global_rect()
 	var bar := _button_bar.get_global_rect()
-	# 按钮排本身铺满宽度，真正要看的是"第一个按钮左边缘 ~ 最后一个按钮右边缘"是否居中
+	# 按钮组：横向上取"第一个按钮左边缘 ~ 最后一个按钮右边缘"，纵向取整组范围
+	var group_top := INF
+	var group_bottom := -INF
 	var group_left := INF
 	var group_right := -INF
 	for child in _button_bar.get_children():
 		var button := child as Control
 		if button == null:
 			continue
-		group_left = minf(group_left, button.get_global_rect().position.x)
-		group_right = maxf(group_right, button.get_global_rect().end.x)
-	print("[Title自检] 屏幕 %dx%d | 战绩面板 位置%s 尺寸%dx%d 右边距%d | 按钮组 %d~%d 宽%d 中心%d(屏幕中心%d) 距底%d" % [
+		var rect := button.get_global_rect()
+		group_left = minf(group_left, rect.position.x)
+		group_right = maxf(group_right, rect.end.x)
+		group_top = minf(group_top, rect.position.y)
+		group_bottom = maxf(group_bottom, rect.end.y)
+	print("[Title自检] 屏幕 %dx%d | 战绩面板 位置%s 尺寸%dx%d 右边距%d 下边距%d | 按钮组 x %d~%d(中心%d 屏幕中心%d) y %d~%d 距底%d" % [
 		int(screen.x), int(screen.y), str(panel.position), int(panel.size.x), int(panel.size.y),
-		int(screen.x - panel.end.x), int(group_left), int(group_right), int(group_right - group_left),
-		int((group_left + group_right) * 0.5), int(screen.x * 0.5), int(screen.y - bar.end.y)])
+		int(screen.x - panel.end.x), int(screen.y - panel.end.y),
+		int(group_left), int(group_right), int((group_left + group_right) * 0.5), int(screen.x * 0.5),
+		int(group_top), int(group_bottom), int(screen.y - group_bottom)])
 
 
 
