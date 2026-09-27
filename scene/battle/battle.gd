@@ -199,8 +199,8 @@ func _on_boss_door_spawn() -> void:
 func _add_boss_health_title(clock_bar: Sprite2D) -> void:
 	if _boss_title_label != null and is_instance_valid(_boss_title_label):
 		return
-	var hud_layer := $Player/HUDLayer as Node2D
-	if hud_layer == null:
+	var boss_hud := $Player/HUDLayer as Node2D
+	if boss_hud == null:
 		return
 	var label := Label.new()
 	label.name = "BossHealthTitle"
@@ -209,7 +209,7 @@ func _add_boss_health_title(clock_bar: Sprite2D) -> void:
 	label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
 	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	label.add_theme_constant_override("outline_size", 2)
-	hud_layer.add_child(label)
+	boss_hud.add_child(label)
 	label.position = Vector2(time_bar_left_edge_x - 34.0, clock_bar.position.y - 7.0)
 	_boss_title_label = label
 
