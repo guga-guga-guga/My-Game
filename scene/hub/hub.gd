@@ -1,7 +1,7 @@
 extends Node2D
 ## Hub：关卡之间的中间地图（M4-2）—— 可走动、无敌人。
-## 场上 3 个固定位置各站一个角色，类型随机（精英/普通/商店，彼此独立，可能三个都一样）。
-## 玩家走到角色旁 → 出现"按 E 交互"；真正的对话框在 M4-3、商店在 M4-4。
+## 3 个固定位置各站一个角色，顺序固定：精英关 / 普通关 / 商店（左 -> 中 -> 右）。
+## 玩家走近角色 -> 出现 按 E 交互；选中后开对话框（进入 / 取消）。
 
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const NpcScript = preload("res://scene/hub/npc.gd")
@@ -56,10 +56,8 @@ func _ready() -> void:
 			func(npc) -> String: return npc.title))])
 
 
-## 3 个固定位置各生成一个角色（类型随机；同一层固定）
+## 3 个固定位置各生成一个角色（顺序固定：精英关 / 普通关 / 商店）
 func _spawn_npcs() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = RunState.floor_index * 104729
 	# 用户指定：三个位置固定顺序 = 精英关 / 普通关 / 商店（左 -> 中 -> 右）
 	var kinds: Array[String] = ["elite", "battle", "shop"]
 	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
@@ -82,18 +80,6 @@ func _spawn_npcs() -> void:
 		npc.global_position = _cell_center(cell)
 		npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player)
 		npcs.append(npc)
-
-	# 保底：至少有一个普通关（否则这层可能刷出"精英+精英+商店"这种没有主线的组合）
-	var kind_list: Array[String] = []
-	for npc in npcs:
-		kind_list.append(npc.kind)
-	if not kind_list.has("battle"):
-		var replace_index := rng.randi_range(0, npcs.size() - 1)
-		var npc = npcs[replace_index]
-		npc.kind = "battle"
-		npc.title = "普通关"
-		_set_npc_look(npc, battle_frames, KIND_COLORS["battle"])
-		print("[Hub] 本层随机没出普通关，已把第 %d 个位置改成普通关" % (replace_index + 1))
 
 
 ## Hub 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
@@ -180,22 +166,6 @@ func _apply_hub_hud_layout() -> void:
 		if label != null:
 			label.offset_top += delta
 			label.offset_bottom += delta
-
-## 换掉某个已生成角色的外观（保底替换用）
-func _set_npc_look(npc: Node, frames: SpriteFrames, tint: Color) -> void:
-	var body := npc.get_node_or_null("Body") as AnimatedSprite2D
-	if body == null or frames == null:
-		return
-	body.sprite_frames = frames
-	var names := frames.get_animation_names()
-	if names.size() > 0:
-		body.animation = names[0]
-	body.play()
-	body.modulate = tint
-	var prompt := npc.get_node_or_null("Prompt") as Label
-	if prompt != null:
-		prompt.text = "%s
-按 E 交互" % String(npc.title)
 
 # ---------------- 交互与对话框（M4-3） ----------------
 
