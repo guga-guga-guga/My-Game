@@ -527,3 +527,38 @@ scene/enemy.gd         # 可选：金币掉落
 - Hub 场地尺寸与走动速度（默认：沿用现有 16px 瓦片、用 `ArenaGenerator.MODE_BOSS` 生成一张小图 24×16）
 - 商店价格与成长幅度（用户已选"用提议的数值，先跑通再调"）
 - ~~「继续前进」出口~~ → **不要**（已确认 3 个位置必定有角色）
+
+## 14. M4-5 实施记录：战斗胜利 -> 中间地图（Hub）循环
+
+### 14.1 流程改动
+- `GameFlow` 新增 `HUB_SCENE` / `goto_hub()`；`start_new_run()` 从「标题 -> 路线图」改为「标题 -> Hub」
+- 关卡胜利（非 BOSS）：`RunState.advance_floor()` + `GameFlow.goto_hub()`（原来是 `goto_map()`）
+- BOSS 关胜利：`RunState.finish_run(true)` + 结算弹窗「通关 / 整局总结」+ 回标题（不变）
+- 失败：`finish_run(false)` + 回标题（不变）
+- 路线图 `MapScreen` 保留为**调试入口**，不再出现在主流程里
+- `RunState.advance_floor()` 增加上限：已在最终层时保持第 `MAX_FLOOR` 层，
+  避免在最终层打赢精英关后层数溢出到 9
+- 胜利结算文案改为「本层目标达成 回中间地图」（BOSS 关仍是整局总结）
+
+### 14.2 最终层的 BOSS 入口
+Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默认第 8 层）时**中间位置变成 BOSS 关**：
+- kinds 变为 `["elite", "boss", "shop"]`，标题显示「BOSS」，沿用精英关那排图并染红区分
+- 对话正文换成「最终决战 准备好了吗？」
+- 进入后走 `GameFlow.start_battle({node_type: "boss"})`，Battle 按 boss 目标生成场地
+
+### 14.3 验证（headless 全链路）
+1. 第 8 层 Hub：角色 = 精英关 / BOSS / 商店；进入后场地 房间=1 红门=4（符合 BOSS 场地规则）
+2. 完整循环：连续 7 次「胜利 -> 回 Hub -> 层数 +1」，从第 1 层一路推到第 8 层，
+   第 8 层中间位置自动变成 BOSS
+3. 击败 BOSS：结算弹窗显示整局总结（到达层数 8/8、总击杀、用时、金币），
+   `局进行中=false / 已通关=true` -> 回标题
+
+### 14.4 相关调试开关
+| 开关 | 位置 | 作用 |
+|---|---|---|
+| `debug_dialogue_test` | hub.gd | 自动打开角色对话并发送真实 E 键 |
+| `debug_dialogue_kind` | hub.gd | 自动对话针对哪个角色（elite / battle / shop / boss） |
+| `debug_floor` | hub.gd | 强制层数（测最终层 BOSS 位置用） |
+| `debug_start_gold` | hub.gd | 进入 Hub 预支金币（单独测商店用） |
+| `debug_instant_win` | battle.gd | 任意关卡秒胜，走完整条结算 + 切场景链路 |
+| `debug_instant_boss_win` | battle.gd | 仅 BOSS 关秒胜 |

@@ -85,8 +85,9 @@ func try_spend_gold(amount: int) -> bool:
 
 
 # ---- 层数推进 ----
+## 前进一层；已在最终层时保持在最终层（避免打赢最终层的精英关后层数溢出）
 func advance_floor() -> void:
-	floor_index += 1
+	floor_index = mini(floor_index + 1, MAX_FLOOR)
 	floor_changed.emit(floor_index)
 
 

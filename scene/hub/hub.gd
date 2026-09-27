@@ -19,6 +19,8 @@ const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
 @export var debug_dialogue_kind: String = ""
 ## 调试：进入 Hub 时预支多少金币（单独测商店用；0 = 不预支）
 @export var debug_start_gold: int = 0
+## 调试：进入 Hub 时强制层数（测最终层的 BOSS 位置用；0 = 用真实层数）
+@export var debug_floor: int = 0
 
 ## 3 个固定位置（相对地图中心的格偏移）
 const SLOT_OFFSETS: Array[Vector2i] = [Vector2i(-4, -2), Vector2i(0, -2), Vector2i(4, -2)]
@@ -29,6 +31,7 @@ const KIND_COLORS := {
 	"battle": Color(1.0, 1.0, 1.0),        # 普通关：原色
 	"elite": Color(0.72, 0.45, 1.0),       # 精英关：染紫
 	"shop": Color(1.0, 0.95, 0.55),        # 商店：偏金光（图形用玩家形象）
+	"boss": Color(1.0, 0.42, 0.38),        # BOSS 关：染红（图形用精英关那一排）
 }
 
 var arena_data: Dictionary = {}
@@ -42,6 +45,13 @@ var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"
 
 
 func _ready() -> void:
+	# 调试开关先于一切生效：层数决定三个位置的角色类型，必须在 _spawn_npcs() 之前赋值
+	if debug_floor > 0:
+		RunState.floor_index = debug_floor
+		print("[Hub] 调试: 强制层数 = %d" % debug_floor)
+	if debug_start_gold > 0:
+		RunState.add_gold(debug_start_gold)
+		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
 	var use_seed := arena_seed if arena_seed != 0 else randi()
 	var generator = ArenaGen.new()
 	# Hub 很小（默认 12x6），生成器有 24x16 的下限，所以这里直接铺一张干净的小房间
@@ -59,9 +69,6 @@ func _ready() -> void:
 	_spawn_npcs()
 	_setup_dialogue()
 	_setup_gold_hud()
-	if debug_start_gold > 0:
-		RunState.add_gold(debug_start_gold)
-		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
 	if debug_dialogue_test:
 		_start_debug_dialogue_test()
 	if debug_dialogue_test:
@@ -75,6 +82,9 @@ func _ready() -> void:
 func _spawn_npcs() -> void:
 	# 用户指定：三个位置固定顺序 = 精英关 / 普通关 / 商店（左 -> 中 -> 右）
 	var kinds: Array[String] = ["elite", "battle", "shop"]
+	if RunState.is_final_floor():
+		kinds = ["elite", "boss", "shop"]   # 最终层：中间那个位置变成 BOSS 关
+		print("[Hub] 最终层（第 %d 层）：中间位置改为 BOSS 关" % RunState.floor_index)
 	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
@@ -88,13 +98,26 @@ func _spawn_npcs() -> void:
 		var use_frames: SpriteFrames = player_frames
 		if kind == "battle":
 			use_frames = battle_frames
-		elif kind == "elite":
-			use_frames = elite_frames
-		var title := "商店" if kind == "shop" else ("精英关" if kind == "elite" else "普通关")
+		elif kind == "elite" or kind == "boss":
+			use_frames = elite_frames       # BOSS 也用精英那排图，靠颜色区分
+		var title := _npc_title(kind)
 		add_child(npc)
 		npc.global_position = _cell_center(cell)
 		npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player)
 		npcs.append(npc)
+
+
+func _npc_title(kind: String) -> String:
+	match kind:
+		"elite":
+			return "精英关"
+		"battle":
+			return "普通关"
+		"shop":
+			return "商店"
+		"boss":
+			return "BOSS"
+	return kind
 
 
 ## Hub 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
@@ -279,6 +302,8 @@ func _open_npc_dialogue(npc: Node) -> void:
 	var body := "要进入这里吗？"
 	if npc.kind == "shop":
 		body = "要进来看看货吗？"
+	elif npc.kind == "boss":
+		body = "最终决战 准备好了吗？"
 	_dialogue.show_dialogue(npc.title, [body], ["进入", "取消"])
 	_sync_player_lock()                         # 开完再锁，_is_ui_open() 这时才是 true
 	print("[Hub] 对话打开: %s" % npc.title)
