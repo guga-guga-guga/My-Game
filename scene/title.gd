@@ -126,7 +126,7 @@ func _build_records_panel() -> void:
 	_records_panel.offset_bottom = -RECORDS_PANEL_MARGIN
 	add_child(_records_panel)
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.55)                     # 只要半透明底，不要金边
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.28)                     # 只要半透明底，不要金边（用户要求更透）
 	style.set_corner_radius_all(4)
 	style.set_content_margin_all(12)
 	_records_panel.add_theme_stylebox_override("panel", style)
@@ -160,6 +160,11 @@ func _check_title_layout() -> void:
 		group_right = maxf(group_right, rect.end.x)
 		group_top = minf(group_top, rect.position.y)
 		group_bottom = maxf(group_bottom, rect.end.y)
+	print("[Title自检] 样例 闯关: %s" % _format_record_line({"index": 27, "mode": "run", "floor": 10, "gold": 123}))
+	print("[Title自检] 样例 经典: %s" % _format_record_line({"index": 26, "mode": "classic", "elapsed": 68.0, "kills": 60}))
+	var real_text := _build_records_text().split("
+")
+	print("[Title自检] 真实存档首行: %s（共 %d 行）" % [real_text[0] if not real_text.is_empty() else "", real_text.size()])
 	print("[Title自检] 屏幕 %dx%d | 战绩面板 位置%s 尺寸%dx%d 右边距%d 下边距%d | 按钮组 x %d~%d(中心%d 屏幕中心%d) y %d~%d 距底%d" % [
 		int(screen.x), int(screen.y), str(panel.position), int(panel.size.x), int(panel.size.y),
 		int(screen.x - panel.end.x), int(screen.y - panel.end.y),
@@ -212,25 +217,7 @@ func _build_records_text() -> String:
 		if typeof(record) != TYPE_DICTIONARY:
 			continue
 		var record_data: Dictionary = record
-		var state := "未通关"
-		if bool(record_data.get("won", false)):
-			state = "通关"
-		var floor_reached := int(record_data.get("floor", 0))
-		if floor_reached > 0:
-			# 闯关模式（M4 起）：用时 = 整局时间
-			lines.append("第 %d 局  到达第 %d 层  用时 %s 秒  击杀 %d  %s" % [
-				int(record_data.get("index", 0)), floor_reached,
-				_format_seconds(float(record_data.get("elapsed", 0.0))),
-				int(record_data.get("kills", 0)), state,
-			])
-		else:
-			# 经典模式：单关，用时就是存活时间
-			lines.append("第 %d 局  存活 %s 秒  击杀 %d  %s" % [
-				int(record_data.get("index", 0)),
-				_format_seconds(float(record_data.get("elapsed", 0.0))),
-				int(record_data.get("kills", 0)),
-				state,
-			])
+		lines.append(_format_record_line(record_data))
 	
 	if lines.is_empty():
 		return "还没有战绩，先来一局吧"
@@ -242,6 +229,23 @@ func _build_records_text() -> String:
 			text += "\n"
 		text += line
 	return text
+
+
+#一行的显示格式（用户要求按模式区分）:
+#   闯关模式 -> 到了多少层 + 金币数量
+#   经典模式 -> 坚持了多久 + 击杀了多少
+#老存档没有 mode 字段，就用 floor>0 推断（那时候只有经典模式）
+func _format_record_line(record_data: Dictionary) -> String:
+	var index := int(record_data.get("index", 0))
+	var mode := String(record_data.get("mode", ""))
+	if mode.is_empty():
+		mode = "run" if int(record_data.get("floor", 0)) > 0 else "classic"
+	if mode == "run":
+		return "第 %d 局  闯关模式  到达第 %d 层  金币 %d" % [
+			index, maxi(int(record_data.get("floor", 0)), 1), int(record_data.get("gold", 0))]
+	return "第 %d 局  经典模式  坚持 %s 秒  击杀 %d" % [
+		index, _format_seconds(float(record_data.get("elapsed", 0.0))), int(record_data.get("kills", 0))]
+
 
 
 func _format_seconds(seconds: float) -> String:

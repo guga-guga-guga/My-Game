@@ -46,10 +46,11 @@ static func load_data(path: String = SAVE_PATH) -> Dictionary:
 
 ## 追加一条战绩elapsed 是存活秒数，kills 是击杀数，won 表示是否撑满全场
 ## floor_reached: 闯关模式到达的层数（经典模式填 0，开始界面会据此换一种显示格式）
+## gold: 闯关模式结束时的金币数（经典模式填 0）
 ## path: 一般不用传，只有 headless 自检会指到临时文件，避免污染真实存档
 ## 新记录插到最前面，超出 MAX_RECORDS 的从末尾丢掉
 static func add_record(elapsed: float, kills: int, won: bool, floor_reached: int = 0,
-		path: String = SAVE_PATH) -> void:
+		gold: int = 0, path: String = SAVE_PATH) -> void:
 	var data := load_data(path)
 	var next_index := int(data.get("total_rounds", 0)) + 1
 	var records: Array = data.get("records", [])
@@ -60,6 +61,8 @@ static func add_record(elapsed: float, kills: int, won: bool, floor_reached: int
 		"kills": maxi(kills, 0),
 		"won": won,
 		"floor": maxi(floor_reached, 0),
+		"gold": maxi(gold, 0),
+		"mode": "run" if floor_reached > 0 else "classic",
 	})
 	while records.size() > MAX_RECORDS:
 		records.pop_back()

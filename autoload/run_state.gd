@@ -247,5 +247,5 @@ func finish_run(did_clear: bool) -> void:
 	# 一局只写一条战绩（M4 闯关模式原来完全没写，开始界面右侧的"最近战绩"一直是空的）
 	if not _record_written:
 		_record_written = true
-		RoundRecords.add_record(run_elapsed, total_kills, did_clear, floor_index)
+		RoundRecords.add_record(run_elapsed, total_kills, did_clear, floor_index, gold)
 	run_finished.emit(did_clear)
