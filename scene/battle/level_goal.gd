@@ -120,7 +120,10 @@ static func progress_text(goal: Dictionary, state: Dictionary) -> String:
 		elif type == TYPE_CLEAR_WAVES:
 			parts.append("波次 %d / %d" % [int(state.get("waves_done", 0)), int(target)])
 		elif type == TYPE_BOSS:
-			parts.append("BOSS %s" % ("已击败" if bool(state.get("boss_defeated", false)) else "存活"))
+			if bool(state.get("boss_defeated", false)):
+				parts.append("BOSS 已击败")
+			else:
+				parts.append("BOSS %d%%" % int(round(float(state.get("boss_hp_ratio", 1.0)) * 100.0)))
 	return " ".join(parts)
 
 

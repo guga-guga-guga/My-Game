@@ -41,6 +41,7 @@ var _waves_done := 0
 var _waves_finished := false
 var _wave_timer_left := 0.0
 var _boss_defeated := false
+var _boss: Enemy = null
 
 
 func _ready() -> void:
@@ -54,6 +55,7 @@ func _ready() -> void:
 	_configure_result_dialog()
 	_setup_hud()
 	_setup_goal_hud()
+	_apply_goal_hud_layout()
 
 	# ② 场地数据 到 ③ 铺瓦片 红门在 Overlay 层 到 ④ 出怪点与红门成对创建
 	var use_seed := arena_seed if arena_seed != 0 else random_generator.randi()
@@ -161,6 +163,7 @@ func _spawn_boss() -> void:
 		push_warning("[Battle] Boss 场景实例化失败")
 		return
 	enemy_container.add_child(boss)
+	_boss = boss
 	var spawn_cell := _farthest_door_cell_from(arena_data["player_spawn"])
 	boss.global_position = cell_to_world(spawn_cell)
 	boss.setup(BossConfig, player)
@@ -190,8 +193,89 @@ func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 
 func _on_boss_defeated() -> void:
 	_boss_defeated = true
+	var bar := $Player/HUDLayer/TimeBar as Sprite2D
+	if bar != null:
+		bar.visible = false          # Boss 死后收起红条
 	if debug_print:
 		print("[Battle] Boss 已击败, 目标达成判定=%s" % str(LevelGoal.is_satisfied(goal, _goal_state())))
+
+
+# ---------------- 目标驱动的 HUD 布局（顶部时间条 / 时钟 / 生命值位置） ----------------
+
+## 规则：
+##   有时限关卡（survive / elite）：保持原样（时钟 + 绿条 + 生命值在下方）
+##   Boss 关：删掉时钟；绿条 → 红条并**横向居中**，绑定 Boss 血量；生命值留在原位（避免压到居中红条）
+##   其他无时限关卡（clear_waves）：删掉时钟与绿条；生命值图标 + 文字**整体上移到原时间那一行**（横向不动）
+func _apply_goal_hud_layout() -> void:
+	var time_icon := $Player/HUDLayer/TimeIcon as Sprite2D
+	var time_bar := $Player/HUDLayer/TimeBar as Sprite2D
+	var life_icon := $Player/HUDLayer/LifeIcon as Sprite2D
+	var life_label := $Player/HUDLayer/LifeCountLabel as Label
+	if LevelGoal.time_limit(goal) > 0.0:
+		return                                   # 有时限：完全保持原样
+	if time_icon != null:
+		time_icon.visible = false                # 无时限：时钟一律删除
+	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+		_prepare_boss_health_bar(time_bar)
+	else:
+		if time_bar != null:
+			time_bar.visible = false             # 其他无时限：绿条也删掉
+		_move_life_display_up_to_time_row(life_icon, life_label, time_icon, time_bar)
+
+
+## Boss 关：绿条 → 红条（居中 + 之后由 _update_time_bar 绑定 Boss 血量）
+func _prepare_boss_health_bar(time_bar: Sprite2D) -> void:
+	if time_bar == null:
+		return
+	time_bar.visible = true
+	time_bar.modulate = Color(1.0, 0.28, 0.28)
+	time_bar.position.x = 0.0
+	# 居中后必须重算左边缘（父类 _setup_hud 是按原位置算的），否则条会往右跑
+	if time_bar.centered:
+		time_bar_left_edge_x = time_bar.position.x - (time_bar_texture_width * time_bar_full_scale_x * 0.5)
+	else:
+		time_bar_left_edge_x = time_bar.position.x
+
+
+## 其他无时限关卡：生命值图标 + 文字整体上移到"原时间那一行"（只改纵向）
+func _move_life_display_up_to_time_row(life_icon: Sprite2D, life_label: Label, time_icon: Sprite2D, time_bar: Sprite2D) -> void:
+	var time_row_y := 0.0
+	if time_icon != null:
+		time_row_y = time_icon.position.y
+	elif time_bar != null:
+		time_row_y = time_bar.position.y
+	else:
+		return
+	if life_icon == null:
+		return
+	var delta := time_row_y - life_icon.position.y
+	life_icon.position.y += delta
+	if life_label != null:
+		life_label.offset_top += delta
+		life_label.offset_bottom += delta
+
+
+## Boss 血量比例（0~1）
+func _boss_hp_ratio() -> float:
+	if _boss == null or not is_instance_valid(_boss) or _boss.config == null:
+		return 1.0
+	return clampf(float(_boss.current_health) / float(maxi(_boss.config.max_health, 1)), 0.0, 1.0)
+
+
+## 覆盖父类：Boss 关顶部条 = Boss 血量条；其余关卡沿用倒计时
+func _update_time_bar() -> void:
+	if goal.get("type", "") != LevelGoal.TYPE_BOSS or time_bar == null:
+		super._update_time_bar()
+		return
+	var fill_ratio := 0.0
+	if not _boss_defeated:
+		fill_ratio = _boss_hp_ratio()
+	time_bar.scale.x = time_bar_full_scale_x * fill_ratio
+	if not time_bar.centered:
+		time_bar.position.x = time_bar_left_edge_x
+		return
+	var current_width := time_bar_texture_width * time_bar.scale.x
+	time_bar.position.x = time_bar_left_edge_x + (current_width * 0.5)
 
 
 # ---------------- 目标 HUD:屏幕底部居中，纯文字 零美术  ----------------
@@ -246,7 +330,8 @@ func _goal_state() -> Dictionary:
 		"time_left": stage_time_left,
 		"waves_done": _waves_done,
 		"waves_total": _waves.size(),
-		"boss_defeated": _boss_defeated,          # M3:Boss 死亡时由 Boss 置真
+		"boss_defeated": _boss_defeated,
+		"boss_hp_ratio": _boss_hp_ratio(),          # M3:Boss 死亡时由 Boss 置真
 	}
 
 
@@ -294,4 +379,10 @@ func _self_check() -> void:
 		_waves_done, _waves.size(), round_kill_count,
 		str(LevelGoal.is_satisfied(goal, _goal_state())),
 		("" if first_enemy == null else "；首个敌人距最近红门 %.1f px" % door_distance)])
+	var _hud_bar := $Player/HUDLayer/TimeBar as Sprite2D
+	var _hud_life := $Player/HUDLayer/LifeIcon as Sprite2D
+	var _hud_icon_time := $Player/HUDLayer/TimeIcon as Sprite2D
+	print("[Battle自检] HUD布局: 时钟可见=%s 条可见=%s 条X=%.0f 条色=%s 生命Y=%.0f" % [
+		str(_hud_icon_time.visible), str(_hud_bar.visible), _hud_bar.position.x,
+		str(_hud_bar.modulate), _hud_life.position.y])
 	print("[Battle自检] HUD第一行=%s ， HUD第二行=%s" % [_goal_label.text, _detail_label.text])
