@@ -151,13 +151,13 @@ func show_dialogue(title_text: String, lines: Array, options: Array) -> void:
 	set_process(true)
 
 
-func _set_options_ready(ready: bool) -> void:
-	if _options_ready == ready:
+func _set_options_ready(want_ready: bool) -> void:
+	if _options_ready == want_ready:
 		return
-	_options_ready = ready
-	_option_box.modulate = Color(1, 1, 1, 1) if ready else Color(1, 1, 1, 0.30)
+	_options_ready = want_ready
+	_option_box.modulate = Color(1, 1, 1, 1) if want_ready else Color(1, 1, 1, 0.30)
 	for button in _buttons:
-		button.disabled = not ready
+		button.disabled = not want_ready
 
 
 ## 面板高度跟着内容走（至少 BOX_MIN_HEIGHT），从底部往上长
@@ -246,7 +246,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_confirm()
 	else:
 		return
-	get_viewport().set_input_as_handled()
+	# 注意：_confirm() 里可能触发「进入关卡」-> 切场景，本节点会被摘出场景树，
+	# 此时 get_viewport() 返回 null。必须判空，否则报错 + 调试器断点会把游戏卡住。
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_input_as_handled()
 
 
 func _close() -> void:

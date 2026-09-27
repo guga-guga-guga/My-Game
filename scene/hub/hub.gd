@@ -222,7 +222,9 @@ func _on_dialogue_option(index: int) -> void:
 		print("[Hub] 商店界面还没做（M4-4）")     # M4-4 接商店
 		return
 	print("[Hub] 进入关卡: %s（第 %d 层）" % [kind, RunState.floor_index])
-	GameFlow.start_battle({"floor": RunState.floor_index, "node_type": kind})
+	# 延迟一帧再切：不要在输入回调里把当前场景直接摘掉，
+	# 否则回调后续代码（以及对话框的收尾）会作用在已离开场景树的节点上。
+	GameFlow.start_battle.call_deferred({"floor": RunState.floor_index, "node_type": kind})
 
 
 func _on_dialogue_closed() -> void:
@@ -254,6 +256,8 @@ func _debug_open_first_npc() -> void:
 
 
 func _debug_pick_enter() -> void:
-	print("[Hub] 调试: 自动按一次 E（等价于确认当前选项）")
-	if _dialogue != null:
-		_dialogue.debug_confirm()
+	print("[Hub] 调试: 发送真实 E 按键事件（走 _unhandled_input，和玩家按键完全同一条路）")
+	var event := InputEventKey.new()
+	event.physical_keycode = KEY_E
+	event.pressed = true
+	Input.parse_input_event(event)

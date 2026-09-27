@@ -23,7 +23,7 @@ func _ready() -> void:
 		
 	
 # 道具临近消失时开始闪烁
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if lifetime_timer.is_stopped():
 		if is_expiring:
 			is_expiring = false
