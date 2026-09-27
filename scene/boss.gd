@@ -32,6 +32,8 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var skill_interval_p3: float = 5.5
 @export var telegraph_time: float = 0.7
 @export var recover_duration: float = 0.8
+## 阶段切换黄闪的持续时间（秒）
+@export var phase_flash_duration: float = 0.5
 
 @export_group("技能参数")
 @export var minion_count_min: int = 3
@@ -43,8 +45,10 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var charge_duration: float = 1.1
 @export var landing_spread_cells: int = 6
 @export var sprite_scale: float = 2.0
-## 身后那层红色剪影的放大倍率（越大红边越粗）
-@export var outline_scale: float = 1.14
+## 红色外圈半径（世界像素；Boss 本体碰撞半径 16）
+@export var outline_radius: float = 22.0
+## 红色外圈线宽（世界像素，技能预警时会变粗）
+@export var outline_width: float = 2.5
 ## 抛小怪的独立冷却（比其它技能长得多，避免场上小怪堆积 —— 用户反馈召唤太频繁）
 @export var summon_cooldown: float = 14.0
 ## 场上小怪（不含 Boss）超过这个数量就不再抛
@@ -64,8 +68,9 @@ var _pending_skill := ""
 var _locked_target := Vector2.ZERO
 var _charge_direction := Vector2.ZERO
 var _glow_material: ShaderMaterial = null
-var _outline_sprite: AnimatedSprite2D = null
+var _outline_ring: Line2D = null
 var _summon_cooldown_left := 0.0
+var _phase_flash_left := 0.0
 var _minion_configs: Array[EnemyConfig] = []
 var _telegraphs: Array[Sprite2D] = []
 
@@ -122,9 +127,18 @@ func _physics_process(delta: float) -> void:
 	# 只有追击/冲撞时才让父类的 AI 驱动移动；预警与硬直期间调用 set_ai_suspended
 	set_ai_suspended(_state != State.CHASE and _state != State.CHARGE)
 
+	if _phase_flash_left > 0.0:                            # 阶段切换的短脉冲
+		_phase_flash_left = maxf(_phase_flash_left - delta, 0.0)
+		if _state != State.TELEGRAPH:
+			_set_flash(_phase_flash_left / maxf(phase_flash_duration, 0.01))
+			if _phase_flash_left <= 0.0:
+				_set_flash(0.0)
+
 	if _state == State.TELEGRAPH:
 		_telegraph_left -= delta
-		_set_flash(absf(sin(_telegraph_left * 16.0)))     # 黄闪脉冲
+		var pulse := absf(sin(_telegraph_left * 16.0))
+		_set_flash(pulse)                                  # 黄闪脉冲
+		_set_outline_intensity(pulse)                      # 红圈同时变粗
 		if _telegraph_left <= 0.0:
 			_execute_pending_skill()
 	elif _state == State.CHARGE:
@@ -139,7 +153,6 @@ func _physics_process(delta: float) -> void:
 	elif _state == State.CHASE and _skill_timer <= 0.0 and not is_dead:
 		_begin_skill()
 
-	_sync_outline()
 	super._physics_process(delta)
 
 
@@ -176,7 +189,7 @@ func _update_phase() -> void:
 	if next == _phase:
 		return
 	_phase = next
-	_set_flash(1.0)                                    # 阶段切换也闪一下，提示玩家
+	_phase_flash_left = phase_flash_duration           # 短脉冲：不能一直亮着（原来卡在 1.0 = 黄闪时间过长）
 	_skill_timer = minf(_skill_timer, 1.0)
 	print("[Boss] 进入阶段 P%d（血量 %.0f%%）" % [_phase + 1, ratio * 100.0])
 
@@ -211,7 +224,8 @@ func _pick_skill() -> String:
 	if _phase >= Phase.P3:
 		pool.append("charge")
 	if pool.is_empty():
-		return ""
+		# 抛小怪在冷却时不能空着（否则 P1 会长时间不出手）—— 用扔自爆怪顶上
+		return "bomb" if _phase < Phase.P2 else "charge"
 	var index := randi() % pool.size()
 	if pool.size() > 1 and pool[index] == _pending_skill:
 		index = (index + 1) % pool.size()          # 避免连续两次同一技能
@@ -237,16 +251,16 @@ func _spawn_telegraph(position_world: Vector2, radius_px: float) -> void:
 	var sprite := Sprite2D.new()
 	sprite.texture = TelegraphTexture
 	sprite.global_position = position_world
-	sprite.z_index = -1                                 # 画在地面上、角色之下
-	sprite.modulate = Color(1.0, 1.0, 1.0, 0.85)
-	var final_scale := (radius_px / 64.0) * 2.0          # 贴图半径 64px（128x128）
-	sprite.scale = Vector2.ONE * final_scale * 0.35
+	sprite.z_index = 1                                  # 必须 >=1：地砖 z=0，设 -1 会被地面挡住（落点圈看不清的根因）
+	sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)          # 不透明，保证看得清
+	var final_scale := (radius_px / 64.0) * 2.4          # 贴图半径 64px（128x128），再放大 20%
+	sprite.scale = Vector2.ONE * final_scale * 0.5
 	parent.add_child(sprite)
 	_telegraphs.append(sprite)
 	var tween := sprite.create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(sprite, "scale", Vector2.ONE * final_scale, telegraph_time)
-	tween.tween_property(sprite, "modulate:a", 0.25, telegraph_time)
+	tween.tween_property(sprite, "modulate:a", 0.55, telegraph_time)
 
 
 # ---------------- 技能执行 ----------------
@@ -397,31 +411,32 @@ func _snap_to_walkable(position_world: Vector2) -> Vector2:
 
 # ---------------- 显示（shader）与收尾 ----------------
 
-## 红色外描边：在 Boss 身后叠一层"放大版红色剪影"。
-## 比 shader 采样法可靠（不依赖贴图是否有透明留白），代价只是多画一个 Sprite。
+## 红色外描边：用 Line2D 画一个闭合红圈。
+## 为什么不用 shader 采样 / 红色剪影：前者在贴图没有透明留白时 UV 越界被 clamp、算不出描边；
+## 后者叠加后肉眼看不出。代码画圈不依赖贴图，半径 22px、线宽 2.5px，经相机 4 倍放大后是
+## 屏幕上 88px 半径、10px 线宽的红圈，必然可见。
 func _setup_outline() -> void:
-	_outline_sprite = AnimatedSprite2D.new()
-	_outline_sprite.name = "BossOutline"
-	_outline_sprite.z_index = -1                 # 画在本体后面
-	_outline_sprite.z_as_relative = true
-	_outline_sprite.modulate = Color(1.0, 0.12, 0.12, 1.0)
-	_outline_sprite.scale = Vector2(sprite_scale, sprite_scale) * outline_scale
-	add_child(_outline_sprite)
-	_sync_outline()
+	_outline_ring = Line2D.new()
+	_outline_ring.name = "BossRing"
+	_outline_ring.width = outline_width
+	_outline_ring.default_color = Color(1.0, 0.1, 0.1, 0.95)
+	_outline_ring.closed = true
+	_outline_ring.antialiased = false
+	_outline_ring.z_index = 2                 # 高于地砖(0)与普通敌人(0)
+	_outline_ring.z_as_relative = true
+	var points := PackedVector2Array()
+	for index in range(24):
+		var angle := TAU * float(index) / 24.0
+		points.append(Vector2(cos(angle), sin(angle)) * outline_radius)
+	_outline_ring.points = points
+	add_child(_outline_ring)
 
 
-## 把剪影的动画/朝向/帧/位置同步成和本体一致（"就是本体放大一点"）
-func _sync_outline() -> void:
-	if _outline_sprite == null or not is_instance_valid(_outline_sprite) or animated_sprite == null:
-		return
-	if _outline_sprite.sprite_frames != animated_sprite.sprite_frames:
-		_outline_sprite.sprite_frames = animated_sprite.sprite_frames
-	_outline_sprite.animation = animated_sprite.animation
-	_outline_sprite.frame = animated_sprite.frame
-	_outline_sprite.flip_h = animated_sprite.flip_h
-	_outline_sprite.flip_v = animated_sprite.flip_v
-	_outline_sprite.position = animated_sprite.position
-	_outline_sprite.scale = animated_sprite.scale * outline_scale
+## 预警期间让红圈变粗变亮（和黄闪一起给玩家"要出手了"的信号）
+func _set_outline_intensity(value: float) -> void:
+	if _outline_ring != null and is_instance_valid(_outline_ring):
+		_outline_ring.width = outline_width * (1.0 + value * 1.6)
+		_outline_ring.default_color = Color(1.0, 0.1 + value * 0.4, 0.1, 0.95)
 
 
 func _setup_glow() -> void:

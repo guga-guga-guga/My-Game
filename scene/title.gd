@@ -66,6 +66,10 @@ func _build_ui() -> void:
 	var start_button := _make_button("经典模式，单关 ", "StartButton")
 	start_button.pressed.connect(_on_start_button_pressed)
 	box.add_child(start_button)
+
+	var boss_button := _make_button("调试: 直接打 Boss", "DebugBossButton")
+	boss_button.pressed.connect(_on_debug_boss_pressed)
+	box.add_child(boss_button)
 	
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
@@ -194,3 +198,9 @@ func _on_quit_button_pressed() -> void:
 
 func _on_start_run_button_pressed() -> void:
 	GameFlow.start_new_run()
+
+func _on_debug_boss_pressed() -> void:
+	# 调试用：跳过路线图，直接从最终层（Boss 关）开始
+	RunState.reset()
+	RunState.floor_index = RunState.MAX_FLOOR
+	GameFlow.start_battle({"floor": RunState.floor_index, "node_type": "boss"})

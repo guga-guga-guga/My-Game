@@ -169,7 +169,7 @@ func _spawn_boss() -> void:
 		return
 	enemy_container.add_child(boss)
 	_boss = boss
-	var spawn_cell := _farthest_door_cell_from(arena_data["player_spawn"])
+	var spawn_cell := _farthest_spawn_cell_from(arena_data["player_spawn"])
 	boss.global_position = cell_to_world(spawn_cell)
 	boss.setup(BossConfig, player)
 	if boss.has_method("set_arena"):
@@ -180,12 +180,35 @@ func _spawn_boss() -> void:
 		boss.boss_defeated.connect(_on_boss_defeated)
 	if not boss.died.is_connected(_on_enemy_died):
 		boss.died.connect(_on_enemy_died)
-	print("[Battle] Boss 已放出: 出生格=%s（玩家在 %s）" % [str(spawn_cell), str(arena_data["player_spawn"])])
+	print("[Battle] Boss 已放出: 出生格=%s（玩家在 %s，相距 %.0f 格）" % [
+		str(spawn_cell), str(arena_data["player_spawn"]),
+		Vector2(spawn_cell).distance_to(Vector2(arena_data["player_spawn"]))])
 	if debug_instant_boss_win:
 		_start_debug_instant_win()
 
 
-## 取"离玩家最远的那道红门"作为 Boss 出生点
+## Boss 出生点：优先取"离玩家最远的红门"；若还不够远（不足地图短边的一半），
+## 就在全场可通行格里挑离玩家最远的那个 —— 保证一进关卡玩家和 Boss 离得很远。
+func _farthest_spawn_cell_from(cell: Vector2i) -> Vector2i:
+	var best := _farthest_door_cell_from(cell)
+	var best_distance := Vector2(best).distance_to(Vector2(cell))
+	var minimum := minf(float(arena_data["width"]), float(arena_data["height"])) * 0.5
+	if best_distance < minimum:
+		var grid: Array = arena_data["grid"]
+		var w: int = arena_data["width"]
+		var h: int = arena_data["height"]
+		for y in range(1, h - 1):
+			for x in range(1, w - 1):
+				if int(grid[y * w + x]) != 0:
+					continue
+				var distance := Vector2(x, y).distance_to(Vector2(cell))
+				if distance > best_distance:
+					best_distance = distance
+					best = Vector2i(x, y)
+	return best
+
+
+## 取"离玩家最远的那道红门"
 func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 	var best: Vector2i = cell
 	var best_distance := -1.0
