@@ -42,13 +42,15 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var throw_height: float = 34.0
 @export var bomb_throw_duration: float = 0.75
 @export var charge_speed: float = 240.0
+## 冲刺预警时间（比其他技能短：闪一次黄光就冲）
+@export var charge_telegraph_time: float = 0.45
 @export var charge_duration: float = 1.1
 @export var landing_spread_cells: int = 6
 @export var sprite_scale: float = 2.0
 ## 红色外圈半径（世界像素；Boss 本体碰撞半径 16）
-@export var outline_radius: float = 22.0
+@export var outline_radius: float = 21.0
 ## 红色外圈线宽（世界像素，技能预警时会变粗）
-@export var outline_width: float = 2.5
+@export var outline_width: float = 1.5
 ## 抛小怪的独立冷却（比其它技能长得多，避免场上小怪堆积 —— 用户反馈召唤太频繁）
 @export var summon_cooldown: float = 14.0
 ## 场上小怪（不含 Boss）超过这个数量就不再抛
@@ -69,7 +71,9 @@ var _locked_target := Vector2.ZERO
 var _charge_direction := Vector2.ZERO
 var _glow_material: ShaderMaterial = null
 var _outline_ring: Line2D = null
+var _outline_ring_outer: Line2D = null
 var _summon_cooldown_left := 0.0
+var _invulnerable := false
 var _phase_flash_left := 0.0
 var _minion_configs: Array[EnemyConfig] = []
 var _telegraphs: Array[Sprite2D] = []
@@ -136,9 +140,13 @@ func _physics_process(delta: float) -> void:
 
 	if _state == State.TELEGRAPH:
 		_telegraph_left -= delta
-		var pulse := absf(sin(_telegraph_left * 16.0))
-		_set_flash(pulse)                                  # 黄闪脉冲
-		_set_outline_intensity(pulse)                      # 红圈同时变粗
+		if _pending_skill == "charge":
+			_set_flash(1.0)                                # 冲刺：稳定黄光，不脉冲
+			_set_outline_intensity(1.0)
+		else:
+			var pulse := absf(sin(_telegraph_left * 16.0))
+			_set_flash(pulse)                              # 其它技能：黄闪脉冲
+			_set_outline_intensity(pulse)
 		if _telegraph_left <= 0.0:
 			_execute_pending_skill()
 	elif _state == State.CHARGE:
@@ -154,6 +162,13 @@ func _physics_process(delta: float) -> void:
 		_begin_skill()
 
 	super._physics_process(delta)
+
+
+## 冲刺期间免疫伤害（用户要求：闪光结束到冲刺结束之间不掉血）
+func apply_damage(amount: int) -> bool:
+	if _invulnerable:
+		return false
+	return super.apply_damage(amount)
 
 
 func _get_move_direction() -> Vector2:
@@ -209,7 +224,8 @@ func _begin_skill() -> void:
 	# 锁定"此刻"玩家位置：扔自爆怪/冲撞都以它为落点（Boss 停止移动时的位置）
 	_locked_target = target_player.global_position if is_instance_valid(target_player) else global_position
 	_state = State.TELEGRAPH
-	_telegraph_left = telegraph_time
+	# 冲刺用更短预警（闪一次黄光就冲），其它技能用标准预警
+	_telegraph_left = minf(telegraph_time, charge_telegraph_time) if _pending_skill == "charge" else telegraph_time
 	_show_telegraph(next_skill)
 	boss_skill.emit(next_skill, _locked_target)
 
@@ -221,7 +237,7 @@ func _pick_skill() -> String:
 		pool.append("minions")
 	if _phase >= Phase.P2:
 		pool.append("bomb")
-	if _phase >= Phase.P3:
+	if _phase >= Phase.P2:
 		pool.append("charge")
 	if pool.is_empty():
 		# 抛小怪在冷却时不能空着（否则 P1 会长时间不出手）—— 用扔自爆怪顶上
@@ -253,8 +269,8 @@ func _spawn_telegraph(position_world: Vector2, radius_px: float) -> void:
 	sprite.global_position = position_world
 	sprite.z_index = 1                                  # 必须 >=1：地砖 z=0，设 -1 会被地面挡住（落点圈看不清的根因）
 	sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)          # 不透明，保证看得清
-	var final_scale := (radius_px / 64.0) * 2.4          # 贴图半径 64px（128x128），再放大 20%
-	sprite.scale = Vector2.ONE * final_scale * 0.5
+	var final_scale := (radius_px / 64.0) * 1.5          # 贴图半径 64px（128x128）：上一版放太大，收回来
+	sprite.scale = Vector2.ONE * final_scale * 0.65
 	parent.add_child(sprite)
 	_telegraphs.append(sprite)
 	var tween := sprite.create_tween()
@@ -283,6 +299,9 @@ func _execute_pending_skill() -> void:
 		charge_count += 1
 		_state = State.CHARGE
 		_charge_left = charge_duration
+		_invulnerable = true                               # 冲刺全程免伤（用户要求）
+		_set_flash(1.0)
+		_set_outline_intensity(1.0)
 		print("[Boss] 冲撞开始（方向 %s）" % str(_charge_direction.round()))
 	else:
 		_enter_recover()
@@ -368,7 +387,9 @@ func _on_throw_finished(node: Enemy, target_position: Vector2, detonate_on_land:
 func _enter_recover() -> void:
 	_state = State.RECOVER
 	_recover_left = recover_duration
+	_invulnerable = false                              # 冲刺结束，恢复可被打
 	_set_flash(0.0)
+	_set_outline_intensity(0.0)
 
 
 # ---------------- 网格工具（落点必须落在可通行格上） ----------------
@@ -411,32 +432,40 @@ func _snap_to_walkable(position_world: Vector2) -> Vector2:
 
 # ---------------- 显示（shader）与收尾 ----------------
 
-## 红色外描边：用 Line2D 画一个闭合红圈。
-## 为什么不用 shader 采样 / 红色剪影：前者在贴图没有透明留白时 UV 越界被 clamp、算不出描边；
-## 后者叠加后肉眼看不出。代码画圈不依赖贴图，半径 22px、线宽 2.5px，经相机 4 倍放大后是
-## 屏幕上 88px 半径、10px 线宽的红圈，必然可见。
+## 红色外描边：两层很细的红环（内环稍亮 + 外环很淡）当柔光，比单圈粗红圈好看得多。
+## 预警时会一起变亮变粗（见 _set_outline_intensity）。
 func _setup_outline() -> void:
-	_outline_ring = Line2D.new()
-	_outline_ring.name = "BossRing"
-	_outline_ring.width = outline_width
-	_outline_ring.default_color = Color(1.0, 0.1, 0.1, 0.95)
-	_outline_ring.closed = true
-	_outline_ring.antialiased = false
-	_outline_ring.z_index = 2                 # 高于地砖(0)与普通敌人(0)
-	_outline_ring.z_as_relative = true
+	_outline_ring = _make_ring("BossRingInner", outline_radius, outline_width, Color(1.0, 0.15, 0.15, 0.5))
+	_outline_ring_outer = _make_ring("BossRingOuter", outline_radius + 3.5, outline_width * 2.2, Color(1.0, 0.2, 0.2, 0.16))
+
+
+func _make_ring(ring_name: String, radius: float, width: float, color: Color) -> Line2D:
+	var ring := Line2D.new()
+	ring.name = ring_name
+	ring.width = width
+	ring.default_color = color
+	ring.closed = true
+	ring.antialiased = false
+	ring.z_index = 2                 # 高于地砖(0)与普通敌人(0)
+	ring.z_as_relative = true
 	var points := PackedVector2Array()
-	for index in range(24):
-		var angle := TAU * float(index) / 24.0
-		points.append(Vector2(cos(angle), sin(angle)) * outline_radius)
-	_outline_ring.points = points
-	add_child(_outline_ring)
+	for index in range(28):
+		var angle := TAU * float(index) / 28.0
+		points.append(Vector2(cos(angle), sin(angle)) * radius)
+	ring.points = points
+	add_child(ring)
+	return ring
 
 
-## 预警期间让红圈变粗变亮（和黄闪一起给玩家"要出手了"的信号）
+## 预警期间：两层环一起变亮变粗，给玩家明确的出手信号
 func _set_outline_intensity(value: float) -> void:
-	if _outline_ring != null and is_instance_valid(_outline_ring):
-		_outline_ring.width = outline_width * (1.0 + value * 1.6)
-		_outline_ring.default_color = Color(1.0, 0.1 + value * 0.4, 0.1, 0.95)
+	if _outline_ring == null or not is_instance_valid(_outline_ring):
+		return
+	_outline_ring.width = outline_width * (1.0 + value * 1.4)
+	_outline_ring.default_color = Color(1.0, 0.15 + value * 0.6, 0.1, 0.5 + value * 0.45)
+	if _outline_ring_outer != null and is_instance_valid(_outline_ring_outer):
+		_outline_ring_outer.width = outline_width * 2.2 * (1.0 + value * 1.2)
+		_outline_ring_outer.default_color = Color(1.0, 0.2 + value * 0.6, 0.1, 0.16 + value * 0.35)
 
 
 func _setup_glow() -> void:
