@@ -22,6 +22,9 @@ const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
 
 ## 3 个固定位置（相对地图中心的格偏移）
 const SLOT_OFFSETS: Array[Vector2i] = [Vector2i(-4, -2), Vector2i(0, -2), Vector2i(4, -2)]
+## 右上角金币 HUD 的字号（用户要求：和对话框同一套大字）
+const GOLD_HUD_FONT_SIZE := 28
+
 const KIND_COLORS := {
 	"battle": Color(1.0, 1.0, 1.0),        # 普通关：原色
 	"elite": Color(0.72, 0.45, 1.0),       # 精英关：染紫
@@ -33,6 +36,7 @@ var npcs: Array = []
 var _player: Player = null
 var _dialogue = null
 var _shop = null
+var _gold_hud: Label = null
 var _active_npc = null
 var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"，加冷却避免立刻重开
 
@@ -54,6 +58,7 @@ func _ready() -> void:
 
 	_spawn_npcs()
 	_setup_dialogue()
+	_setup_gold_hud()
 	if debug_start_gold > 0:
 		RunState.add_gold(debug_start_gold)
 		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
@@ -155,6 +160,61 @@ func _nearest_floor(cell: Vector2i) -> Vector2i:
 func _cell_center(cell: Vector2i) -> Vector2:
 	return Vector2(cell.x * ArenaGen.TILE_SIZE + ArenaGen.TILE_SIZE * 0.5,
 		cell.y * ArenaGen.TILE_SIZE + ArenaGen.TILE_SIZE * 0.5)
+
+
+## 右上角常驻金币显示（用户要求）；买完东西立刻刷新
+func _setup_gold_hud() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "GoldHud"
+	layer.layer = 5                       # 在对话框(10)/商店(11)之下，不挡它们
+	add_child(layer)
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN    # 内容变宽时往左长
+	panel.grow_vertical = Control.GROW_DIRECTION_END
+	panel.offset_left = -16.0
+	panel.offset_right = -16.0
+	panel.offset_top = 16.0
+	panel.offset_bottom = 16.0
+	layer.add_child(panel)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.06, 0.80)
+	style.border_color = Color(1.0, 0.87, 0.55, 0.85)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(6)
+	style.set_content_margin_all(10)
+	panel.add_theme_stylebox_override("panel", style)
+	_gold_hud = Label.new()
+	_gold_hud.name = "GoldLabel"
+	_gold_hud.add_theme_font_size_override("font_size", GOLD_HUD_FONT_SIZE)
+	_gold_hud.add_theme_color_override("font_color", Color(1.0, 0.90, 0.60))
+	_gold_hud.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	panel.add_child(_gold_hud)
+	if not RunState.gold_changed.is_connected(_on_gold_changed):
+		RunState.gold_changed.connect(_on_gold_changed)
+	_refresh_gold_hud()
+	print("[Hub] 金币 HUD 就绪: %s" % _gold_hud.text)
+	_check_gold_hud_rect.call_deferred()
+
+
+## 自检：金币 HUD 是否完整落在屏幕内（右上角留 16px 边距）
+func _check_gold_hud_rect() -> void:
+	if _gold_hud == null:
+		return
+	var rect: Rect2 = (_gold_hud.get_parent() as Control).get_global_rect()
+	var screen := Vector2(get_viewport().get_visible_rect().size)
+	print("[Hub] 金币 HUD 矩形位置 %s 宽高 %dx%d 屏幕 %dx%d 右边距 %d 上边距 %d" % [
+		str(rect.position), int(rect.size.x), int(rect.size.y),
+		int(screen.x), int(screen.y), int(screen.x - rect.end.x), int(rect.position.y)])
+
+
+func _on_gold_changed(_amount: int) -> void:
+	_refresh_gold_hud()
+
+
+func _refresh_gold_hud() -> void:
+	if _gold_hud != null:
+		_gold_hud.text = "金币 %d" % RunState.gold
 
 
 ## Hub 无时间限制：删时钟 + 绿条，生命值上移（与 M3 的规则一致）
