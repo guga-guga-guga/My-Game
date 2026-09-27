@@ -58,6 +58,7 @@ var _boss: Enemy = null
 var _boss_title_label: Label = null
 var _debug_win_started := false
 var _last_result_won := false
+var _gold_gained := 0                 ## 本关赚到的金币（汇报用）
 var _result_recorded := false
 
 
@@ -235,7 +236,9 @@ func _apply_run_state_to_player() -> void:
 ## 金币只来自敌人掉落
 func _on_enemy_died() -> void:
 	super._on_enemy_died()
-	RunState.add_gold(maxi(gold_per_enemy_kill, 0))
+	var gain := maxi(gold_per_enemy_kill, 0)
+	RunState.add_gold(gain)
+	_gold_gained += gain
 
 
 
@@ -300,7 +303,9 @@ func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 
 func _on_boss_defeated() -> void:
 	_boss_defeated = true
-	RunState.add_gold(maxi(gold_per_boss_kill, 0))
+	var boss_gain := maxi(gold_per_boss_kill, 0)
+	RunState.add_gold(boss_gain)
+	_gold_gained += boss_gain
 
 	var bar := $Player/HUDLayer/TimeBar as Sprite2D
 	if bar != null:
@@ -425,8 +430,23 @@ func _record_run_progress() -> void:
 	RunState.run_elapsed += _get_round_elapsed_time()
 	# 生命值跨关卡保留：把这一场打完的血量写回整局状态
 	RunState.set_health(_get_player_current_health(), player.max_health)
+	# 本关成绩：留给 Hub 在关卡之间做汇报
+	RunState.last_level_report = {
+		"floor": RunState.floor_index,
+		"node_type": String(goal.get("node_type", "")),
+		"goal_text": LevelGoal.describe(goal),
+		"won": _last_result_won,
+		"kills": round_kill_count,
+		"elapsed": _get_round_elapsed_time(),
+		"gold_gained": _gold_gained,
+		"gold_total": RunState.gold,
+		"health": _get_player_current_health(),
+		"max_health": player.max_health,
+	}
 	if debug_print:
-		print("[Battle] 离场写回: 生命 %d/%d 金币 %d" % [RunState.current_health, RunState.max_health, RunState.gold])
+		print("[Battle] 离场写回: 生命 %d/%d 金币 %d 本关击杀 %d 用时 %.1f 秒" % [
+			RunState.current_health, RunState.max_health, RunState.gold,
+			round_kill_count, _get_round_elapsed_time()])
 
 
 ## 通关总结（打在同一个结算弹窗里，多行文本会让弹窗自动放大）

@@ -7,6 +7,7 @@ const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const NpcScript = preload("res://scene/hub/npc.gd")
 const DialogueBoxScript = preload("res://scene/hub/dialogue_box.gd")
 const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
+const LevelReportScript = preload("res://scene/hub/level_report.gd")
 
 @export_group("场地")
 @export var arena_width: int = 12
@@ -39,6 +40,7 @@ var npcs: Array = []
 var _player: Player = null
 var _dialogue = null
 var _shop = null
+var _report = null
 var _gold_hud: Label = null
 var _active_npc = null
 var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"，加冷却避免立刻重开
@@ -69,6 +71,8 @@ func _ready() -> void:
 	_spawn_npcs()
 	_setup_dialogue()
 	_setup_gold_hud()
+	_setup_level_report()
+	_show_pending_level_report()
 	if debug_dialogue_test:
 		_start_debug_dialogue_test()
 	if debug_dialogue_test:
@@ -108,16 +112,7 @@ func _spawn_npcs() -> void:
 
 
 func _npc_title(kind: String) -> String:
-	match kind:
-		"elite":
-			return "精英关"
-		"battle":
-			return "普通关"
-		"shop":
-			return "商店"
-		"boss":
-			return "BOSS"
-	return kind
+	return RunState.kind_title(kind)
 
 
 ## Hub 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
@@ -309,6 +304,34 @@ func _open_npc_dialogue(npc: Node) -> void:
 	print("[Hub] 对话打开: %s" % npc.title)
 
 
+## 关卡之间的汇报（上一关成绩 + 本层通讯）：只有刚打完一关才会弹
+func _setup_level_report() -> void:
+	_report = LevelReportScript.new()
+	add_child(_report)
+	_report.closed.connect(_on_report_closed)
+
+
+func _show_pending_level_report() -> void:
+	if _report == null:
+		return
+	var report := RunState.last_level_report
+	if report.is_empty():
+		return
+	RunState.last_level_report = {}         # 只展示一次
+	if int(report.get("floor", 0)) != RunState.floor_index - 1:
+		return                              # 层数对不上（例如调试跳关）就不显示
+	_report.show_report(report, RunState.floor_index)
+	_sync_player_lock()
+	print("[Hub] 本关汇报: 上一关 第 %d 层 %s 击杀 %d 用时 %.1f 秒 金币 +%d" % [
+		int(report.get("floor", 0)), RunState.kind_title(String(report.get("node_type", ""))),
+		int(report.get("kills", 0)), float(report.get("elapsed", 0.0)), int(report.get("gold_gained", 0))])
+
+
+func _on_report_closed() -> void:
+	_sync_player_lock()
+	_interact_lock = 0.25
+
+
 func _on_shop_closed() -> void:
 	_sync_player_lock()
 	_interact_lock = 0.25
@@ -324,7 +347,9 @@ func _open_shop() -> void:
 
 ## 任一界面（对话/商店）打开时锁住玩家移动；集中一处判断，避免两边互相解锁
 func _is_ui_open() -> bool:
-	return (_dialogue != null and _dialogue.is_open()) or (_shop != null and _shop.is_open())
+	return ((_dialogue != null and _dialogue.is_open())
+		or (_shop != null and _shop.is_open())
+		or (_report != null and _report.is_open()))
 
 
 func _sync_player_lock() -> void:
@@ -380,6 +405,9 @@ func _start_debug_dialogue_test() -> void:
 
 
 func _debug_open_first_npc() -> void:
+	if _report != null and _report.is_open():
+		print("[Hub] 调试: 先关掉本关汇报")
+		_report.debug_close()
 	var target: Node = null
 	for npc in npcs:
 		if debug_dialogue_kind.is_empty() or String(npc.kind) == debug_dialogue_kind:
