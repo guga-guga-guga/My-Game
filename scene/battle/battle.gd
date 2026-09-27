@@ -37,6 +37,8 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 
 ## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
 @export var debug_instant_boss_win: bool = false
+## 调试: 任意关卡都直接模拟胜利（验证"胜利 -> 回 Hub -> 层数 +1"整条链路）
+@export var debug_instant_win: bool = false
 
 var arena_data: Dictionary = {}
 var goal: Dictionary = {}
@@ -54,6 +56,7 @@ var _wave_timer_left := 0.0
 var _boss_defeated := false
 var _boss: Enemy = null
 var _boss_title_label: Label = null
+var _debug_win_started := false
 var _last_result_won := false
 var _result_recorded := false
 
@@ -137,6 +140,9 @@ func cell_to_world(cell: Vector2i) -> Vector2:
 
 func _process(delta: float) -> void:
 	super._process(delta)              # 父类:倒计时 / HUD / 胜负判定 判定已被我覆盖 
+	if debug_instant_win and not _debug_win_started:
+		_debug_win_started = true
+		_start_debug_instant_win()     # 调试：任意关卡秒胜（走完整条 结算 -> 切场景 链路）
 	_update_waves(delta)
 	_refresh_goal_hud()
 
@@ -403,8 +409,8 @@ func _on_result_dialog_exit_requested() -> void:
 			RunState.finish_run(true)          # 最终层通关: 整局结束
 			GameFlow.goto_title()
 		else:
-			RunState.advance_floor()           # 普通关胜利: 层数 +1 回路线图
-			GameFlow.goto_map()
+			RunState.advance_floor()           # 普通关/精英关胜利: 层数 +1
+			GameFlow.goto_hub()                # M4-5: 回中间地图（原来是回路线图）
 	else:
 		RunState.finish_run(false)             # 失败: 整局结束
 		GameFlow.goto_title()
@@ -449,7 +455,7 @@ func _show_result_dialog(result_title: String, result_message: String) -> void:
 ## 说明: 结算弹窗会把 time_scale 设为 0，计时器全部冻结，所以这里不用延时，
 ##       直接在模拟击杀的同一帧验证流程（等价于玩家点确定）。
 func _debug_instant_win() -> void:
-	print("[Battle调试] 模拟击败 Boss")
+	print("[Battle调试] 模拟胜利 目标=%s 层数=%d" % [String(goal.get("type", "?")), RunState.floor_index])
 	_last_result_won = true          # 真实路径里由 _check_game_result() 置位，这里手动补上
 	if not _boss_defeated:
 		_on_boss_defeated()
@@ -535,7 +541,7 @@ func _check_game_result() -> void:
 		if goal.get("type", "") == LevelGoal.TYPE_BOSS:
 			_show_result_dialog("通关", _build_run_summary())      # 最终层: 显示整局总结
 		else:
-			_show_result_dialog(RESULT_TITLE_WIN, RESULT_MESSAGE_WIN)
+			_show_result_dialog(RESULT_TITLE_WIN, "本层目标达成 回中间地图")
 		return
 	if LevelGoal.is_timed_out(goal, state):
 		_last_result_won = false
