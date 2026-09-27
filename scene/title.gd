@@ -234,7 +234,8 @@ func _build_records_text() -> String:
 	return text
 
 
-#一行的显示格式（用户要求按模式区分）:
+#一行的显示格式（用户要求）:
+#   行首只显示序号 1~10（不要"第 N 局"字样）
 #   闯关模式 -> 到了多少层 + 金币数量
 #   经典模式 -> 坚持了多久 + 击杀了多少
 #老存档没有 mode 字段，就用 floor>0 推断（那时候只有经典模式）
@@ -242,10 +243,11 @@ func _format_record_line(record_data: Dictionary, row_number: int = 1) -> String
 	var mode := String(record_data.get("mode", ""))
 	if mode.is_empty():
 		mode = "run" if int(record_data.get("floor", 0)) > 0 else "classic"
+	# %2d: 1~9 前面补一个空格，跟 "10" 对齐
 	if mode == "run":
-		return "第 %d 局  闯关模式  到达第 %d 层  金币 %d" % [
+		return "%2d  闯关模式  到达第 %d 层  金币 %d" % [
 			row_number, maxi(int(record_data.get("floor", 0)), 1), int(record_data.get("gold", 0))]
-	return "第 %d 局  经典模式  坚持 %s 秒  击杀 %d" % [
+	return "%2d  经典模式  坚持 %s 秒  击杀 %d" % [
 		row_number, _format_seconds(float(record_data.get("elapsed", 0.0))), int(record_data.get("kills", 0))]
 
 
