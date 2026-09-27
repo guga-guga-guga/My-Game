@@ -4,7 +4,7 @@ extends Area2D
 ## 走近会显示头顶提示；按 E 的交互逻辑在 M4-3 接对话框。
 
 const PROMPT_FONT_SIZE := 8          # 世界空间会被相机放大 4 倍
-const INTERACT_RANGE := 22.0
+const INTERACT_RANGE := 18.0
 
 var kind := "battle"
 var title := ""
