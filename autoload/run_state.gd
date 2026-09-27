@@ -62,6 +62,7 @@ func reset() -> void:
 	fire_rate_multiplier = 1.0
 	bonus_invincibility = 0.0
 	route.clear()
+	shop_buy_count.clear()
 	run_started.emit()
 	floor_changed.emit(floor_index)
 	gold_changed.emit(gold)
@@ -131,6 +132,62 @@ func get_player_move_speed() -> float:
 
 func get_player_fire_interval() -> float:
 	return BASE_FIRE_INTERVAL / (maxf(fire_rate_multiplier, 0.01) * (1.0 + 0.1 * float(fire_rate_level)))
+
+
+# ---- 商店（Hub，本局内有效；新开一局重置）----
+const SHOP_KEYS: Array[String] = ["health", "fire_rate", "damage"]
+const SHOP_PRICE_HEALTH := 15        ## 生命上限 +1 的初始价
+const SHOP_PRICE_FIRE_RATE := 25     ## 射速 +10% 的初始价
+const SHOP_PRICE_DAMAGE := 40        ## 子弹伤害 +1 的初始价
+const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
+
+## 本局各商品已买次数 key -> int 
+var shop_buy_count: Dictionary = {}
+
+
+## 当前价格 = 初始价 + 初始价的一半 * 已买次数
+func shop_price(key: String) -> int:
+	var base := 0
+	match key:
+		"health":
+			base = SHOP_PRICE_HEALTH
+		"fire_rate":
+			base = SHOP_PRICE_FIRE_RATE
+		"damage":
+			base = SHOP_PRICE_DAMAGE
+		_:
+			return 0
+	var bought: int = int(shop_buy_count.get(key, 0))
+	return base + int(float(base) * SHOP_PRICE_GROWTH) * bought
+
+
+## 买一件：钱不够返回 false（不扣钱也不加属性）
+func shop_buy(key: String) -> bool:
+	if not SHOP_KEYS.has(key):
+		return false
+	if not try_spend_gold(shop_price(key)):
+		return false
+	match key:
+		"health":
+			buy_max_health()
+		"fire_rate":
+			buy_fire_rate()
+		"damage":
+			buy_damage()
+	shop_buy_count[key] = int(shop_buy_count.get(key, 0)) + 1
+	return true
+
+
+## 该商品已升了几级（商店显示用）
+func shop_level(key: String) -> int:
+	match key:
+		"health":
+			return maxi(max_health - BASE_MAX_HEALTH, 0)
+		"fire_rate":
+			return fire_rate_level
+		"damage":
+			return maxi(player_damage - 1, 0)
+	return 0
 
 
 func finish_run(did_clear: bool) -> void:

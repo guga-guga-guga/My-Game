@@ -6,14 +6,17 @@ extends Node2D
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const NpcScript = preload("res://scene/hub/npc.gd")
 const DialogueBoxScript = preload("res://scene/hub/dialogue_box.gd")
+const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
 
 @export_group("场地")
 @export var arena_width: int = 12
 @export var arena_height: int = 6
 ## 0 = 每次随机；填数字可复现
 @export var arena_seed: int = 0
-## 调试：自动打开第一个角色的对话框并在 1.2 秒后自动选"进入"（headless 验证用）
+## 调试：自动打开角色对话框并自动确认"进入"（headless 验证用）
 @export var debug_dialogue_test: bool = false
+## 调试：自动对话针对哪个角色（elite / battle / shop，空 = 第一个）
+@export var debug_dialogue_kind: String = ""
 
 ## 3 个固定位置（相对地图中心的格偏移）
 const SLOT_OFFSETS: Array[Vector2i] = [Vector2i(-4, -2), Vector2i(0, -2), Vector2i(4, -2)]
@@ -27,6 +30,7 @@ var arena_data: Dictionary = {}
 var npcs: Array = []
 var _player: Player = null
 var _dialogue = null
+var _shop = null
 var _active_npc = null
 var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"，加冷却避免立刻重开
 
@@ -175,12 +179,15 @@ func _setup_dialogue() -> void:
 	add_child(_dialogue)
 	_dialogue.option_selected.connect(_on_dialogue_option)
 	_dialogue.closed.connect(_on_dialogue_closed)
+	_shop = ShopPanelScript.new()
+	add_child(_shop)
+	_shop.closed.connect(_on_shop_closed)
 
 
 func _physics_process(delta: float) -> void:
 	if _interact_lock > 0.0:
 		_interact_lock -= delta
-	if _dialogue != null and _dialogue.is_open():
+	if _is_ui_open():
 		return
 	if _interact_lock <= 0.0 and Input.is_action_just_pressed("interact"):
 		var npc = _nearest_npc_in_range()
@@ -204,13 +211,35 @@ func _nearest_npc_in_range() -> Node:
 
 func _open_npc_dialogue(npc: Node) -> void:
 	_active_npc = npc
-	if _player != null:
-		_player.set_physics_process(false)      # 对话期间玩家不能走动
 	var body := "要进入这里吗？"
 	if npc.kind == "shop":
 		body = "要进来看看货吗？"
 	_dialogue.show_dialogue(npc.title, [body], ["进入", "取消"])
+	_sync_player_lock()                         # 开完再锁，_is_ui_open() 这时才是 true
 	print("[Hub] 对话打开: %s" % npc.title)
+
+
+func _on_shop_closed() -> void:
+	_sync_player_lock()
+	_interact_lock = 0.25
+	print("[Hub] 离开商店 金币=%d" % RunState.gold)
+
+
+func _open_shop() -> void:
+	if _shop == null:
+		return
+	_shop.open()
+	print("[Hub] 打开商店 金币=%d" % RunState.gold)
+
+
+## 任一界面（对话/商店）打开时锁住玩家移动；集中一处判断，避免两边互相解锁
+func _is_ui_open() -> bool:
+	return (_dialogue != null and _dialogue.is_open()) or (_shop != null and _shop.is_open())
+
+
+func _sync_player_lock() -> void:
+	if _player != null:
+		_player.set_physics_process(not _is_ui_open())
 
 
 func _on_dialogue_option(index: int) -> void:
@@ -219,7 +248,7 @@ func _on_dialogue_option(index: int) -> void:
 		print("[Hub] 选择了取消")
 		return
 	if kind == "shop":
-		print("[Hub] 商店界面还没做（M4-4）")     # M4-4 接商店
+		_open_shop()
 		return
 	print("[Hub] 进入关卡: %s（第 %d 层）" % [kind, RunState.floor_index])
 	# 延迟一帧再切：不要在输入回调里把当前场景直接摘掉，
@@ -228,9 +257,8 @@ func _on_dialogue_option(index: int) -> void:
 
 
 func _on_dialogue_closed() -> void:
-	if _player != null:
-		_player.set_physics_process(true)
 	_active_npc = null
+	_sync_player_lock()                         # 商店若已打开，这里会保持锁住
 	_interact_lock = 0.25
 
 ## 调试链：0.6 秒后对第一个角色开对话，1.4 秒后自动选「进入」
@@ -247,12 +275,48 @@ func _start_debug_dialogue_test() -> void:
 	t2.timeout.connect(_debug_pick_enter)
 	add_child(t2)
 	t2.start()
+	var t3 := Timer.new()
+	t3.wait_time = 2.4
+	t3.one_shot = true
+	t3.timeout.connect(_debug_report_and_close)
+	add_child(t3)
+	t3.start()
+	var t4 := Timer.new()
+	t4.wait_time = 3.2
+	t4.one_shot = true
+	t4.timeout.connect(_debug_report_after_close)
+	add_child(t4)
+	t4.start()
 
 
 func _debug_open_first_npc() -> void:
-	print("[Hub] 调试: 打开第一个角色的对话")
-	if npcs.size() > 0:
-		_open_npc_dialogue(npcs[0])
+	var target: Node = null
+	for npc in npcs:
+		if debug_dialogue_kind.is_empty() or String(npc.kind) == debug_dialogue_kind:
+			target = npc
+			break
+	if target == null:
+		print("[Hub] 调试: 没找到类型为 %s 的角色" % debug_dialogue_kind)
+		return
+	print("[Hub] 调试: 打开角色对话 [%s]" % String(target.title))
+	_open_npc_dialogue(target)
+
+
+func _debug_report_and_close() -> void:
+	var shop_open: bool = _shop != null and _shop.is_open()
+	var locked: bool = _player != null and not _player.is_physics_processing()
+	print("[Hub] 调试: 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
+	if shop_open:
+		var event := InputEventKey.new()
+		event.physical_keycode = KEY_ESCAPE
+		event.pressed = true
+		Input.parse_input_event(event)
+
+
+func _debug_report_after_close() -> void:
+	var shop_open: bool = _shop != null and _shop.is_open()
+	var locked: bool = _player != null and not _player.is_physics_processing()
+	print("[Hub] 调试: 关闭后 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
 
 
 func _debug_pick_enter() -> void:
