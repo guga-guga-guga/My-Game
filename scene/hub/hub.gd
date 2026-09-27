@@ -72,6 +72,18 @@ func _spawn_npcs() -> void:
 		npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player)
 		npcs.append(npc)
 
+	# 保底：至少有一个普通关（否则这层可能刷出"精英+精英+商店"这种没有主线的组合）
+	var kind_list: Array[String] = []
+	for npc in npcs:
+		kind_list.append(npc.kind)
+	if not kind_list.has("battle"):
+		var replace_index := rng.randi_range(0, npcs.size() - 1)
+		var npc = npcs[replace_index]
+		npc.kind = "battle"
+		npc.title = "普通关"
+		_set_npc_look(npc, battle_frames, KIND_COLORS["battle"])
+		print("[Hub] 本层随机没出普通关，已把第 %d 个位置改成普通关" % (replace_index + 1))
+
 
 ## Hub 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
 func _build_hub_arena(w: int, h: int) -> Dictionary:
@@ -157,3 +169,19 @@ func _apply_hub_hud_layout() -> void:
 		if label != null:
 			label.offset_top += delta
 			label.offset_bottom += delta
+
+## 换掉某个已生成角色的外观（保底替换用）
+func _set_npc_look(npc: Node, frames: SpriteFrames, tint: Color) -> void:
+	var body := npc.get_node_or_null("Body") as AnimatedSprite2D
+	if body == null or frames == null:
+		return
+	body.sprite_frames = frames
+	var names := frames.get_animation_names()
+	if names.size() > 0:
+		body.animation = names[0]
+	body.play()
+	body.modulate = tint
+	var prompt := npc.get_node_or_null("Prompt") as Label
+	if prompt != null:
+		prompt.text = "%s
+按 E 交互" % String(npc.title)
