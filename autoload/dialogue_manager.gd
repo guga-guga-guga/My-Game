@@ -4,6 +4,8 @@ extends Node
 ## 对话期间只锁玩家输入，不用 get_tree().paused（否则会把对话 UI 一起冻住）。
 
 signal dialogue_started(data)
+# M4 才会用到；先用 @warning_ignore 消掉"声明但未使用"的启动告警
+@warning_ignore("unused_signal")
 signal dialogue_line_changed(index: int, line: Dictionary)
 signal dialogue_finished
 
