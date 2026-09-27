@@ -6,6 +6,7 @@ extends Node
 signal run_started
 signal run_finished(cleared: bool)
 signal gold_changed(gold: int)
+signal health_changed(current: int, maximum: int)
 signal floor_changed(floor_index: int)
 
 ## 总层数 含最终 Boss 层 
@@ -159,12 +160,14 @@ func get_player_damage() -> int:
 func set_health(current: int, maximum: int) -> void:
 	max_health = maxi(maximum, 1)
 	current_health = clampi(current, 1, max_health)
+	health_changed.emit(current_health, max_health)
 
 
 ## 商店: +1 生命（上限与当前生命一起 +1）
 func buy_max_health() -> void:
 	max_health += 1
 	current_health += 1
+	health_changed.emit(current_health, max_health)
 
 
 ## 商店: 射速 +10%
