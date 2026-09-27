@@ -50,14 +50,15 @@ func _ready() -> void:
 func _spawn_npcs() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = RunState.floor_index * 104729
-	var kinds: Array[String] = ["battle", "elite", "shop"]
+	# 用户指定：三个位置固定顺序 = 精英关 / 普通关 / 商店（左 -> 中 -> 右）
+	var kinds: Array[String] = ["elite", "battle", "shop"]
 	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
 	var player_frames: SpriteFrames = _player_frames()
 	var center := Vector2i(int(arena_data["width"]) / 2, int(arena_data["height"]) / 2)
 	for index in range(SLOT_OFFSETS.size()):
-		var kind: String = kinds[rng.randi_range(0, kinds.size() - 1)]
+		var kind: String = kinds[index]      # 顺序固定：精英 / 普通 / 商店
 		var cell := _nearest_floor(center + SLOT_OFFSETS[index])
 		var npc = NpcScript.new()
 		# 商店用玩家形象、其它用敌人形象
