@@ -80,11 +80,11 @@ func _ready() -> void:
 
 ## 3 个固定位置各生成一个角色（顺序固定：精英关 / 普通关 / 商店）
 func _spawn_npcs() -> void:
-	# 用户指定：三个位置固定顺序 = 精英关 / 普通关 / 商店（左 -> 中 -> 右）
-	var kinds: Array[String] = ["elite", "battle", "shop"]
-	if RunState.is_final_floor():
-		kinds = ["elite", "boss", "shop"]   # 最终层：中间那个位置变成 BOSS 关
-		print("[Hub] 最终层（第 %d 层）：中间位置改为 BOSS 关" % RunState.floor_index)
+	# 用户指定（本轮）：三个位置随机刷关卡，没有普通关时保底刷一个普通关；
+	# BOSS 层（第 5 / 10 层）固定 商店 - BOSS - 商店
+	var kinds: Array[String] = RunState.hub_kinds()
+	if RunState.is_boss_floor():
+		print("[Hub] BOSS 层（第 %d 层）：左右商店 中间 BOSS" % RunState.floor_index)
 	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)

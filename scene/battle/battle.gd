@@ -405,12 +405,12 @@ func _on_result_dialog_exit_requested() -> void:
 	get_tree().paused = false
 	_record_run_progress()
 	if _last_result_won:
-		if goal.get("type", "") == LevelGoal.TYPE_BOSS:
-			RunState.finish_run(true)          # 最终层通关: 整局结束
+		if goal.get("type", "") == LevelGoal.TYPE_BOSS and RunState.is_final_floor():
+			RunState.finish_run(true)          # 最终层 BOSS 通关: 整局结束
 			GameFlow.goto_title()
 		else:
-			RunState.advance_floor()           # 普通关/精英关胜利: 层数 +1
-			GameFlow.goto_hub()                # M4-5: 回中间地图（原来是回路线图）
+			RunState.advance_floor()           # 普通关/精英关/中途 BOSS 胜利: 层数 +1
+			GameFlow.goto_hub()                # 回中间地图
 	else:
 		RunState.finish_run(false)             # 失败: 整局结束
 		GameFlow.goto_title()
@@ -538,8 +538,10 @@ func _check_game_result() -> void:
 	var state := _goal_state()
 	if LevelGoal.is_satisfied(goal, state):
 		_last_result_won = true
-		if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+		if goal.get("type", "") == LevelGoal.TYPE_BOSS and RunState.is_final_floor():
 			_show_result_dialog("通关", _build_run_summary())      # 最终层: 显示整局总结
+		elif goal.get("type", "") == LevelGoal.TYPE_BOSS:
+			_show_result_dialog("BOSS 击破", "第 %d 层 BOSS 已被击败 回中间地图" % RunState.floor_index)
 		else:
 			_show_result_dialog(RESULT_TITLE_WIN, "本层目标达成 回中间地图")
 		return

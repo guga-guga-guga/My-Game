@@ -8,8 +8,10 @@ signal run_finished(cleared: bool)
 signal gold_changed(gold: int)
 signal floor_changed(floor_index: int)
 
-## 总层数 含最终 Boss 层 后续 M3 会搬进关卡配置资源
-const MAX_FLOOR := 8
+## 总层数 含最终 Boss 层 
+const MAX_FLOOR := 10
+## 固定 BOSS 层（第 5 层是中途 BOSS，第 10 层是最终 BOSS）
+const BOSS_FLOORS: Array[int] = [5, 10]
 
 ## 玩家基础数值:升级只加在"基础值"上，限时道具仍是独立倍率 三层数值，互不污染 
 const BASE_MAX_HEALTH := 3
@@ -93,6 +95,31 @@ func advance_floor() -> void:
 
 func is_final_floor() -> bool:
 	return floor_index >= MAX_FLOOR
+
+
+## 是否 BOSS 层（不传参数 = 当前层）
+func is_boss_floor(index: int = -1) -> bool:
+	return BOSS_FLOORS.has(floor_index if index < 0 else index)
+
+
+## 中间地图三个位置刷什么角色：
+## - BOSS 层：固定 商店 - BOSS - 商店（打 BOSS 前左右各一个商店，方便补给）
+## - 其它层：三个位置随机（精英关/普通关/商店），但没有普通关时保底塞一个普通关
+## 同一层结果固定（用层数做随机种子），方便重进时一致、也方便复现
+func hub_kinds(index: int = -1) -> Array[String]:
+	var target_floor: int = floor_index if index < 0 else index
+	var kinds: Array[String] = []
+	if BOSS_FLOORS.has(target_floor):
+		kinds = ["shop", "boss", "shop"]
+		return kinds
+	var rng := RandomNumberGenerator.new()
+	rng.seed = target_floor * 104729
+	var pool: Array[String] = ["elite", "battle", "shop"]
+	for _slot in range(3):
+		kinds.append(pool[rng.randi_range(0, pool.size() - 1)])
+	if not kinds.has("battle"):
+		kinds[rng.randi_range(0, kinds.size() - 1)] = "battle"    # 保底：至少一个普通关
+	return kinds
 
 
 # ---- 供 Player 取用的最终数值 基础值 × 升级 ----

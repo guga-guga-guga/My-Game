@@ -562,3 +562,25 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 | `debug_start_gold` | hub.gd | 进入 Hub 预支金币（单独测商店用） |
 | `debug_instant_win` | battle.gd | 任意关卡秒胜，走完整条结算 + 切场景链路 |
 | `debug_instant_boss_win` | battle.gd | 仅 BOSS 关秒胜 |
+
+## 15. 关卡刷新规则（用户指定，取代 §13 的固定顺序）
+
+### 15.1 层数与 BOSS 层
+- `RunState.MAX_FLOOR` 由 8 改为 **10**
+- `RunState.BOSS_FLOORS = [5, 10]`：第 5 层是**中途 BOSS**，第 10 层是**最终 BOSS**
+- 中途 BOSS 胜利：`advance_floor()` + 回 Hub（`is_active` 保持 true，结算弹窗写「BOSS 击破」）
+- 最终 BOSS 胜利：`finish_run(true)` + 整局总结 -> 标题
+- 失败：任何时候都 `finish_run(false)` -> 标题（整局结束）
+
+### 15.2 三个位置的刷新规则（`RunState.hub_kinds(floor)`）
+- **BOSS 层（第 5 / 10 层）**：固定 **商店 - BOSS - 商店**（左右各一个商店，打 BOSS 前方便补给）
+- **其它层**：三个位置各自从 `精英关 / 普通关 / 商店` 里随机
+  - 若这一层**没有刷出普通关**，则随机挑一个位置保底改成普通关
+  - 随机用「层数 × 104729」做种子 -> **同一层结果固定可复现**，重进不会变
+- 非 BOSS 层不会刷出 BOSS
+
+### 15.3 自检
+- `tools/test_hub_kinds.tscn`（7 项）：BOSS 层固定组合、非 BOSS 层类型合法/不刷 BOSS/必有一个普通关、
+  同层可复现、随机有效（>= 5 种组合）
+  - 实测 1~40 层：商店共出现 32 次、15 种组合、38 个非 BOSS 层里 14 层没有精英关（说明随机在起作用）
+- 端到端：第 5 层 Hub = 商店/BOSS/商店 -> 进 BOSS -> 秒胜 -> **层数 6、局进行中 false、已通关 false**（继续循环）
