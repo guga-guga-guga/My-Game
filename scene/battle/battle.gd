@@ -30,10 +30,10 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 @export var boss_door_spawn_interval: float = 5.0
 ## Boss 关：场上小怪（不含 Boss）上限
 @export var boss_door_alive_cap: int = 5
-## 每只普通敌人掉落的金币
-@export var gold_per_enemy_kill: int = 1
-## 击败 Boss 的额外金币
-@export var gold_per_boss_kill: int = 8
+## 每只普通敌人掉落的金币（M6 平衡：1 -> 2，否则中期买不起输出，打血厚的敌人会变成磨血）
+@export var gold_per_enemy_kill: int = 2
+## 击败 Boss 的额外金币（M6 平衡：8 -> 20，BOSS 关没有波次，收入几乎为零）
+@export var gold_per_boss_kill: int = 20
 
 ## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
 @export var debug_instant_boss_win: bool = false
@@ -90,6 +90,7 @@ func _ready() -> void:
 	_collect_enemy_spawn_points()
 	_warn_spawn_points_inside_walls()
 	_collect_enemy_configs()
+	_apply_floor_scaling_to_enemy_configs()
 	_configure_enemy_spawn_timer()
 	_keep_player_centered()
 
@@ -112,6 +113,38 @@ func _ready() -> void:
 			str(EnemyPathfinder.instance != null and EnemyPathfinder.instance.is_usable()),
 			str(arena_data["player_spawn"])])
 	_start_self_check()
+
+
+## M6 平衡：普通敌人血量随层数成长（1 + 0.25*(层-1)），速度/数量不变。
+## 必须 duplicate()：配置资源是共享的，直接改会把倍率一路叠上去。
+func _apply_floor_scaling_to_enemy_configs() -> void:
+	var mul := 1.0 + 0.25 * float(maxi(_context_floor(), 1) - 1)
+	if mul <= 1.0 or available_enemy_configs.is_empty():
+		return
+	var scaled: Array[EnemyConfig] = []
+	var summary: Array[String] = []
+	for cfg in available_enemy_configs:
+		if cfg == null:
+			continue
+		var copy: EnemyConfig = cfg.duplicate()
+		copy.max_health = maxi(int(round(float(cfg.max_health) * mul)), 1)
+		scaled.append(copy)
+		summary.append("%d->%d" % [cfg.max_health, copy.max_health])
+	available_enemy_configs = scaled
+	if debug_print:
+		print("[Battle] 敌人血量倍率 x%.2f（第 %d 层）: %s" % [
+			mul, maxi(_context_floor(), 1), "  ".join(summary)])
+
+
+## M6 平衡：最终 BOSS 更肉（半路 BOSS 保持不变）
+func _boss_config_for_floor() -> EnemyConfig:
+	if not RunState.is_final_floor():
+		return BossConfig
+	var copy: EnemyConfig = BossConfig.duplicate()
+	copy.max_health = maxi(int(round(float(BossConfig.max_health) * 1.65)), 1)
+	if debug_print:
+		print("[Battle] 最终 BOSS 血量 %d -> %d" % [BossConfig.max_health, copy.max_health])
+	return copy
 
 
 func _context_floor() -> int:
@@ -251,7 +284,7 @@ func _spawn_boss() -> void:
 	_boss = boss
 	var spawn_cell := _farthest_spawn_cell_from(arena_data["player_spawn"])
 	boss.global_position = cell_to_world(spawn_cell)
-	boss.setup(BossConfig, player)
+	boss.setup(_boss_config_for_floor(), player)
 	if boss.has_method("set_arena"):
 		boss.set_arena(arena_data["grid"], int(arena_data["width"]), int(arena_data["height"]))
 	if "debug_fast_skills" in boss:

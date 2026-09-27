@@ -54,22 +54,28 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 
 	elif type == TYPE_KILL:
 		# 精英:击杀 + 存活，两个条件 ALL 
-		var target := 12 + floor_num * 6
-		var limit := 50.0 + float(floor_num) * 6.0
+		# M6 平衡：击杀 10 + 3*(层-1)，限时 45 + 3*(层-1) 秒
+		# （原来 12 + 6*层 / 50 + 6*层，第 9 层要杀 66 只、限 104 秒，太极端）
+		var target := 10 + (floor_num - 1) * 3
+		var limit := 45.0 + float(floor_num - 1) * 3.0
 		goal["time_limit"] = limit
 		goal["conditions"].append({"type": TYPE_KILL, "target": target, "label": "击杀 %d 个敌人" % target})
 		goal["conditions"].append({"type": TYPE_SURVIVE, "target": limit, "label": "撑满 %.0f 秒" % limit})
 
 	elif type == TYPE_CLEAR_WAVES:
-		var wave_count := clampi(2 + int(floor_num / 2.0), 2, 6)
-		var per_wave := 5 + floor_num * 2
-		var interval := maxf(0.9 - float(floor_num) * 0.05, 0.35)
+		# M6 平衡：总敌人数 12 + 4*(层-1)（第1层12只 -> 第10层48只），波数 2~4，
+		# 出怪间隔 0.85 起每层 -0.03（下限 0.45），波间隔 1.4 起（下限 0.9）
+		# （原来是每波 5 + 2*层、最多 6 波，第 9 层要刷 168 只、单关 90 秒）
+		var wave_count := clampi(2 + int(float(floor_num) / 3.0), 2, 4)
+		var total := 12 + (floor_num - 1) * 4
+		var interval := maxf(0.85 - float(floor_num) * 0.03, 0.45)
+		var delay := maxf(1.4 - float(floor_num) * 0.03, 0.9)
+		var base_count := int(float(total) / float(wave_count))
+		var extra := total - base_count * wave_count
 		for index in range(wave_count):
-			goal["waves"].append({
-				"count": per_wave + index * 2,
-				"interval": interval,
-				"delay": maxf(1.4 - float(floor_num) * 0.05, 0.8),
-			})
+			# 余数放到最后几波，越往后越厚
+			var count := base_count + (1 if index >= wave_count - extra else 0)
+			goal["waves"].append({"count": count, "interval": interval, "delay": delay})
 		goal["conditions"].append({"type": TYPE_CLEAR_WAVES, "target": wave_count, "label": "清空 %d 波敌人" % wave_count})
 
 	elif type == TYPE_BOSS:
