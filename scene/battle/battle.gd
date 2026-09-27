@@ -9,6 +9,8 @@ extends "res://scene/game.gd"
 
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const LevelGoal = preload("res://scene/battle/level_goal.gd")
+const BossScene = preload("res://scene/boss.tscn")
+const BossConfig = preload("res://resources/config/enemy_boss.tres")
 
 @export_group("场地")
 ## 场地尺寸 格 ，会被 ArenaGenerator 夹到 24x16 ~ 38x23
@@ -22,6 +24,8 @@ const LevelGoal = preload("res://scene/battle/level_goal.gd")
 @export var debug_goal_type: String = ""
 ## 打印目标与场地概要
 @export var debug_print: bool = true
+## 调试: 加快 Boss 技能节奏（headless 自检用）
+@export var debug_fast_boss: bool = false
 
 var arena_data: Dictionary = {}
 var goal: Dictionary = {}
@@ -36,6 +40,7 @@ var _wave_index := 0
 var _waves_done := 0
 var _waves_finished := false
 var _wave_timer_left := 0.0
+var _boss_defeated := false
 
 
 func _ready() -> void:
@@ -67,7 +72,9 @@ func _ready() -> void:
 	_keep_player_centered()
 
 	# ⑥ 刷怪:有波次表的关卡走波次推进；其余沿用父类的无限刷怪
-	if _waves.is_empty():
+	if goal["type"] == LevelGoal.TYPE_BOSS:
+		_spawn_boss()
+	elif _waves.is_empty():
 		_spawn_initial_enemies()
 		_start_enemy_spawn_timer()
 	else:
@@ -147,6 +154,46 @@ func _update_waves(delta: float) -> void:
 	_wave_timer_left = maxf(float(_waves[_wave_index].get("delay", 1.2)), 0.0)
 
 
+## Boss 关：从"离玩家最远的那个红门"里放出一只 Boss（复用出怪口的语义）
+func _spawn_boss() -> void:
+	var boss := BossScene.instantiate() as Enemy
+	if boss == null:
+		push_warning("[Battle] Boss 场景实例化失败")
+		return
+	enemy_container.add_child(boss)
+	var spawn_cell := _farthest_door_cell_from(arena_data["player_spawn"])
+	boss.global_position = cell_to_world(spawn_cell)
+	boss.setup(BossConfig, player)
+	if boss.has_method("set_arena"):
+		boss.set_arena(arena_data["grid"], int(arena_data["width"]), int(arena_data["height"]))
+	if "debug_fast_skills" in boss:
+		boss.debug_fast_skills = debug_fast_boss
+	if boss.has_signal("boss_defeated"):
+		boss.boss_defeated.connect(_on_boss_defeated)
+	if not boss.died.is_connected(_on_enemy_died):
+		boss.died.connect(_on_enemy_died)
+	print("[Battle] Boss 已放出: 出生格=%s（玩家在 %s）" % [str(spawn_cell), str(arena_data["player_spawn"])])
+
+
+## 取"离玩家最远的那道红门"作为 Boss 出生点
+func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
+	var best: Vector2i = cell
+	var best_distance := -1.0
+	for door in arena_data["doors"]:
+		var door_cell: Vector2i = door["cell"]
+		var distance := Vector2(door_cell).distance_to(Vector2(cell))
+		if distance > best_distance:
+			best_distance = distance
+			best = door_cell
+	return best
+
+
+func _on_boss_defeated() -> void:
+	_boss_defeated = true
+	if debug_print:
+		print("[Battle] Boss 已击败, 目标达成判定=%s" % str(LevelGoal.is_satisfied(goal, _goal_state())))
+
+
 # ---------------- 目标 HUD:屏幕底部居中，纯文字 零美术  ----------------
 
 func _setup_goal_hud() -> void:
@@ -199,7 +246,7 @@ func _goal_state() -> Dictionary:
 		"time_left": stage_time_left,
 		"waves_done": _waves_done,
 		"waves_total": _waves.size(),
-		"boss_defeated": false,          # M3:Boss 死亡时由 Boss 置真
+		"boss_defeated": _boss_defeated,          # M3:Boss 死亡时由 Boss 置真
 	}
 
 
