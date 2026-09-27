@@ -17,6 +17,8 @@ const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
 @export var debug_dialogue_test: bool = false
 ## 调试：自动对话针对哪个角色（elite / battle / shop，空 = 第一个）
 @export var debug_dialogue_kind: String = ""
+## 调试：进入 Hub 时预支多少金币（单独测商店用；0 = 不预支）
+@export var debug_start_gold: int = 0
 
 ## 3 个固定位置（相对地图中心的格偏移）
 const SLOT_OFFSETS: Array[Vector2i] = [Vector2i(-4, -2), Vector2i(0, -2), Vector2i(4, -2)]
@@ -52,6 +54,9 @@ func _ready() -> void:
 
 	_spawn_npcs()
 	_setup_dialogue()
+	if debug_start_gold > 0:
+		RunState.add_gold(debug_start_gold)
+		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
 	if debug_dialogue_test:
 		_start_debug_dialogue_test()
 	if debug_dialogue_test:
