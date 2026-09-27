@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- BOSS 技能落点警示圈：我在文本里手写的 SVG，Godot 可直接导入 -->
+  <circle cx="64" cy="64" r="58" fill="none" stroke="#ffd400" stroke-width="6" stroke-dasharray="12 10"/>
+  <circle cx="64" cy="64" r="30" fill="none" stroke="#ffd400" stroke-width="3" opacity="0.65"/>
+  <circle cx="64" cy="64" r="6" fill="#ff3b30" opacity="0.9"/>
+</svg>
