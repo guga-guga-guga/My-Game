@@ -24,6 +24,17 @@ var total_kills: int = 0             ## 本局累计击杀
 var run_elapsed: float = 0.0         ## 本局累计用时 秒 
 
 # ---- 长效升级 M5 商店写入，Battle 开场读取 ----
+# ---- 局内成长（Hub 商店写入，Battle 开场读取；新开一局重置）----
+## 生命值：跨关卡保留（上一关剩多少，下一关就带多少）
+var max_health: int = BASE_MAX_HEALTH
+var current_health: int = BASE_MAX_HEALTH
+## 子弹伤害（基础 1，商店每级 +1）
+var player_damage: int = 1
+## 射速等级（每级 +10%）
+var fire_rate_level: int = 0
+## 移速等级（预留）
+var speed_level: int = 0
+# ---- 旧字段（保留兼容）----
 var bonus_max_health: int = 0
 var move_speed_multiplier: float = 1.0
 var fire_rate_multiplier: float = 1.0
@@ -41,6 +52,11 @@ func reset() -> void:
 	gold = 0
 	total_kills = 0
 	run_elapsed = 0.0
+	max_health = BASE_MAX_HEALTH
+	current_health = BASE_MAX_HEALTH
+	player_damage = 1
+	fire_rate_level = 0
+	speed_level = 0
 	bonus_max_health = 0
 	move_speed_multiplier = 1.0
 	fire_rate_multiplier = 1.0
@@ -79,7 +95,34 @@ func is_final_floor() -> bool:
 
 # ---- 供 Player 取用的最终数值 基础值 × 升级 ----
 func get_player_max_health() -> int:
-	return BASE_MAX_HEALTH + bonus_max_health
+	return maxi(max_health, 1)
+
+
+## 子弹伤害（商店升级驱动）
+func get_player_damage() -> int:
+	return maxi(player_damage, 1)
+
+
+## 战斗结束时把这一场的血量写回整局状态（跨关卡保留的关键）
+func set_health(current: int, maximum: int) -> void:
+	max_health = maxi(maximum, 1)
+	current_health = clampi(current, 1, max_health)
+
+
+## 商店: +1 生命（上限与当前生命一起 +1）
+func buy_max_health() -> void:
+	max_health += 1
+	current_health += 1
+
+
+## 商店: 射速 +10%
+func buy_fire_rate() -> void:
+	fire_rate_level += 1
+
+
+## 商店: 子弹伤害 +1
+func buy_damage() -> void:
+	player_damage += 1
 
 
 func get_player_move_speed() -> float:
@@ -87,7 +130,7 @@ func get_player_move_speed() -> float:
 
 
 func get_player_fire_interval() -> float:
-	return BASE_FIRE_INTERVAL / maxf(fire_rate_multiplier, 0.01)
+	return BASE_FIRE_INTERVAL / (maxf(fire_rate_multiplier, 0.01) * (1.0 + 0.1 * float(fire_rate_level)))
 
 
 func finish_run(did_clear: bool) -> void:

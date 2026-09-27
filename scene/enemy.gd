@@ -319,7 +319,10 @@ func  _on_touch_damage_area_area_entered(area: Area2D) -> void:
 	if bullet == null:
 		return
 		
-	var damaged := apply_damage(DEFAULT_BULLET_DAMAGE)
+	var incoming_damage := DEFAULT_BULLET_DAMAGE
+	if area is Bullet:
+		incoming_damage = maxi((area as Bullet).damage, 1)
+	var damaged := apply_damage(incoming_damage)
 	if damaged:
 		bullet.queue_free()
 		

@@ -30,6 +30,11 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 @export var boss_door_spawn_interval: float = 5.0
 ## Boss 关：场上小怪（不含 Boss）上限
 @export var boss_door_alive_cap: int = 5
+## 每只普通敌人掉落的金币
+@export var gold_per_enemy_kill: int = 1
+## 击败 Boss 的额外金币
+@export var gold_per_boss_kill: int = 8
+
 ## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
 @export var debug_instant_boss_win: bool = false
 
@@ -74,6 +79,7 @@ func _ready() -> void:
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
 	player.global_position = cell_to_world(arena_data["player_spawn"])
+	_apply_run_state_to_player()
 
 	# ⑤ 顺序关键:铺完瓦片之后才能重建寻路网格
 	_setup_enemy_pathfinder()
@@ -209,6 +215,24 @@ func _add_boss_health_title(clock_bar: Sprite2D) -> void:
 
 
 ## Boss 关：从"离玩家最远的那个红门"里放出一只 Boss（复用出怪口的语义）
+## 把整局成长（生命/伤害/射速）应用到玩家身上
+func _apply_run_state_to_player() -> void:
+	player.max_health = RunState.max_health
+	player.current_health = clampi(RunState.current_health, 1, RunState.max_health)
+	player.fire_interval = RunState.get_player_fire_interval()
+	if debug_print:
+		print("[Battle] 进场: 生命 %d/%d 子弹伤害 %d 射击间隔 %.3f 金币 %d" % [
+			player.current_health, player.max_health, RunState.get_player_damage(),
+			player.fire_interval, RunState.gold])
+
+
+## 金币只来自敌人掉落
+func _on_enemy_died() -> void:
+	super._on_enemy_died()
+	RunState.add_gold(maxi(gold_per_enemy_kill, 0))
+
+
+
 func _spawn_boss() -> void:
 	var boss := BossScene.instantiate() as Enemy
 	if boss == null:
@@ -270,6 +294,7 @@ func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 
 func _on_boss_defeated() -> void:
 	_boss_defeated = true
+	RunState.add_gold(maxi(gold_per_boss_kill, 0))
 
 	var bar := $Player/HUDLayer/TimeBar as Sprite2D
 	if bar != null:
@@ -392,6 +417,10 @@ func _record_run_progress() -> void:
 	_result_recorded = true
 	RunState.total_kills += round_kill_count
 	RunState.run_elapsed += _get_round_elapsed_time()
+	# 生命值跨关卡保留：把这一场打完的血量写回整局状态
+	RunState.set_health(_get_player_current_health(), player.max_health)
+	if debug_print:
+		print("[Battle] 离场写回: 生命 %d/%d 金币 %d" % [RunState.current_health, RunState.max_health, RunState.gold])
 
 
 ## 通关总结（打在同一个结算弹窗里，多行文本会让弹窗自动放大）
