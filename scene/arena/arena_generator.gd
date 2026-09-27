@@ -46,23 +46,32 @@ const FOUR_DIRS: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, 
 ## 生成一片场地失败会换种子重试；最终回落"空房间"保底布局
 ## 返回字段:ok / seed / width / height / grid / doors / spawns / player_spawn /
 ##           room_count / floor_count / message
-func generate(width: int, height: int, rng_seed: int) -> Dictionary:
+## 场地模式：normal = 房间/走廊+掩体（普通关）；boss = 开阔地+少量大障碍（Boss 关）
+const MODE_NORMAL := "normal"
+const MODE_BOSS := "boss"
+
+
+func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL) -> Dictionary:
 	var w := clampi(width, MIN_WIDTH, MAX_WIDTH)
 	var h := clampi(height, MIN_HEIGHT, MAX_HEIGHT)
 	var last_reason := ""
 	for attempt in range(MAX_ATTEMPTS):
-		var data := _generate_once(w, h, rng_seed + attempt)
+		var data := _generate_once(w, h, rng_seed + attempt, mode)
 		if data.get("ok", false):
 			return data
 		last_reason = String(data.get("reason", ""))
 	var fallback := _empty_room(w, h)
+	fallback["mode"] = mode
+	fallback["obstacles"] = []
 	fallback["message"] = "连续 %d 次生成失败 最后原因:%s ，已回落保底布局" % [MAX_ATTEMPTS, last_reason]
 	return fallback
 
 
-func _generate_once(w: int, h: int, rng_seed: int) -> Dictionary:
+func _generate_once(w: int, h: int, rng_seed: int, mode: String = MODE_NORMAL) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
+	if mode == MODE_BOSS:
+		return _generate_boss_arena(w, h, rng_seed)
 	var grid: Array = []
 	grid.resize(w * h)
 	grid.fill(CELL_WALL)
@@ -456,3 +465,124 @@ func _farthest_floor_from_doors(grid: Array, w: int, h: int, doors: Array) -> Ve
 				best_distance = dist[y * w + x]
 				best = Vector2i(x, y)
 	return best
+
+## Boss 专用场地（单独一套规则，不沿用房间/走廊）：
+##   ① 内部整片开阔地（没有 1 格宽的缝隙，Boss 的本体半径 16 不会被卡）
+##   ② 障碍物只放 2~3 块，且每块都 >= 2x2（用户要求："障碍物至少 2 格宽、墙大量减少"）
+##   ③ 边界墙只有外圈 1 格（用户要求："边界墙至多 2 格宽"）
+func _generate_boss_arena(w: int, h: int, rng_seed: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = rng_seed
+	var grid: Array = []
+	grid.resize(w * h)
+	grid.fill(CELL_FLOOR)
+	for x in range(w):
+		grid[x] = CELL_EDGE
+		grid[(h - 1) * w + x] = CELL_EDGE
+	for y in range(h):
+		grid[y * w] = CELL_EDGE
+		grid[y * w + w - 1] = CELL_EDGE
+
+	var obstacles: Array[Rect2i] = []
+	var target_count := rng.randi_range(2, 3)
+	for _index in range(target_count * 12):
+		if obstacles.size() >= target_count:
+			break
+		var ow := rng.randi_range(2, 4)
+		var oh := rng.randi_range(2, 3)
+		if ow + 4 >= w or oh + 4 >= h:
+			continue
+		var candidate := Rect2i(rng.randi_range(3, w - ow - 4), rng.randi_range(3, h - oh - 4), ow, oh)
+		var overlaps := false
+		for existing in obstacles:
+			if candidate.grow(2).intersects(existing):
+				overlaps = true
+				break
+		if overlaps:
+			continue
+		obstacles.append(candidate)
+		_fill_rect(grid, w, candidate, CELL_WALL)
+
+	var doors: Array[Dictionary] = []
+	for side in ["left", "right", "top", "bottom"]:
+		var door := _make_door(grid, w, h, side, rng)
+		if door.is_empty():
+			return {"ok": false, "reason": "Boss 场地红门创建失败(%s)" % side}
+		doors.append(door)
+
+	var player_spawn := _farthest_floor_from_doors(grid, w, h, doors)
+	if player_spawn == Vector2i(-1, -1):
+		return {"ok": false, "reason": "Boss 场地找不到玩家出生点"}
+
+	var spawns: Array[Vector2i] = []
+	for door in doors:
+		spawns.append(door["cell"])
+
+	var data := {
+		"ok": true, "seed": rng_seed, "mode": MODE_BOSS, "width": w, "height": h,
+		"grid": grid, "doors": doors, "spawns": spawns, "player_spawn": player_spawn,
+		"room_count": 1, "obstacles": obstacles, "floor_count": _count_floor(grid), "message": "",
+	}
+	if not all_doors_reachable(data):
+		return {"ok": false, "reason": "Boss 场地红门不可达"}
+	if not is_boss_passable(data):
+		return {"ok": false, "reason": "Boss 场地存在 1 格宽缝隙（Boss 会被卡住）"}
+	return data
+
+
+## Boss 通过性校验：只在"2x2 全空"的格子上做 flood fill，必须能到达每道红门内侧。
+## 这样就保证了场地上不存在 1 格宽的缝隙 —— 半径 16 的 Boss 不会卡墙。
+func is_boss_passable(data: Dictionary) -> bool:
+	var w: int = data["width"]
+	var h: int = data["height"]
+	var grid: Array = data["grid"]
+	var start: Vector2i = data["player_spawn"]
+	if not _is_2x2_clear(grid, w, h, start):
+		return false
+	var visited := {}
+	var queue: Array[Vector2i] = [start]
+	visited[start] = true
+	while not queue.is_empty():
+		var cell: Vector2i = queue.pop_front()
+		for dir in FOUR_DIRS:
+			var next: Vector2i = cell + dir
+			if visited.has(next) or not _is_2x2_clear(grid, w, h, next):
+				continue
+			visited[next] = true
+			queue.append(next)
+	for door in data["doors"]:
+		var inner: Vector2i = door["cell"] + _inward_step(door, w, h)
+		var reachable := false
+		for offset in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(-1, 0), Vector2i(-1, -1)]:
+			if visited.has(inner + offset):
+				reachable = true
+				break
+		if not reachable:
+			return false
+	return true
+
+
+func _is_2x2_clear(grid: Array, w: int, h: int, cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.y < 0 or cell.x + 1 >= w or cell.y + 1 >= h:
+		return false
+	return (grid[cell.y * w + cell.x] == CELL_FLOOR
+		and grid[cell.y * w + cell.x + 1] == CELL_FLOOR
+		and grid[(cell.y + 1) * w + cell.x] == CELL_FLOOR
+		and grid[(cell.y + 1) * w + cell.x + 1] == CELL_FLOOR)
+
+
+func _inward_step(door: Dictionary, w: int, h: int) -> Vector2i:
+	var cell: Vector2i = door["cell"]
+	if cell.x <= 0:
+		return Vector2i.RIGHT
+	if cell.x >= w - 1:
+		return Vector2i.LEFT
+	if cell.y <= 0:
+		return Vector2i.DOWN
+	return Vector2i.UP
+
+
+func _fill_rect(grid: Array, w: int, rect: Rect2i, value: int) -> void:
+	for y in range(rect.position.y, rect.end.y):
+		for x in range(rect.position.x, rect.end.x):
+			grid[y * w + x] = value

@@ -28,8 +28,8 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var phase3_ratio: float = 0.33
 
 @export_group("技能节奏")
-@export var skill_interval_p1: float = 6.0
-@export var skill_interval_p3: float = 4.0
+@export var skill_interval_p1: float = 8.0
+@export var skill_interval_p3: float = 5.5
 @export var telegraph_time: float = 0.7
 @export var recover_duration: float = 0.8
 
@@ -43,6 +43,10 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var charge_duration: float = 1.1
 @export var landing_spread_cells: int = 6
 @export var sprite_scale: float = 2.0
+## 抛小怪的独立冷却（比其它技能长得多，避免场上小怪堆积 —— 用户反馈召唤太频繁）
+@export var summon_cooldown: float = 14.0
+## 场上小怪（不含 Boss）超过这个数量就不再抛
+@export var max_alive_minions: int = 6
 ## 调试：技能节奏加快 4 倍 + 打印技能日志（headless 自检用）
 @export var debug_fast_skills: bool = false
 ## 调试: 强制阶段(0=自动, 1~3=强制 P1~P3)
@@ -58,6 +62,7 @@ var _pending_skill := ""
 var _locked_target := Vector2.ZERO
 var _charge_direction := Vector2.ZERO
 var _glow_material: ShaderMaterial = null
+var _summon_cooldown_left := 0.0
 var _minion_configs: Array[EnemyConfig] = []
 var _telegraphs: Array[Sprite2D] = []
 
@@ -105,6 +110,10 @@ func _physics_process(delta: float) -> void:
 		_skill_timer -= delta * 4.0
 	else:
 		_skill_timer -= delta
+	if debug_fast_skills:
+		_summon_cooldown_left = maxf(_summon_cooldown_left - delta * 4.0, 0.0)
+	else:
+		_summon_cooldown_left = maxf(_summon_cooldown_left - delta, 0.0)
 
 	# 只有追击/冲撞时才让父类的 AI 驱动移动；预警与硬直期间调用 set_ai_suspended
 	set_ai_suspended(_state != State.CHASE and _state != State.CHARGE)
@@ -175,6 +184,9 @@ func _current_skill_interval() -> float:
 func _begin_skill() -> void:
 	_skill_timer = _current_skill_interval()
 	var next_skill := _pick_skill()
+	if next_skill.is_empty():
+		_skill_timer = 1.5            # 所有技能都在冷却中：稍后再试
+		return
 	_pending_skill = next_skill
 	# 锁定"此刻"玩家位置：扔自爆怪/冲撞都以它为落点（Boss 停止移动时的位置）
 	_locked_target = target_player.global_position if is_instance_valid(target_player) else global_position
@@ -185,11 +197,16 @@ func _begin_skill() -> void:
 
 
 func _pick_skill() -> String:
-	var pool: Array[String] = ["minions"]
+	var pool: Array[String] = []
+	# 抛小怪：独立冷却 + 场上小怪上限（避免小怪越堆越多）
+	if _summon_cooldown_left <= 0.0 and _count_alive_minions() < max_alive_minions:
+		pool.append("minions")
 	if _phase >= Phase.P2:
 		pool.append("bomb")
 	if _phase >= Phase.P3:
 		pool.append("charge")
+	if pool.is_empty():
+		return ""
 	var index := randi() % pool.size()
 	if pool.size() > 1 and pool[index] == _pending_skill:
 		index = (index + 1) % pool.size()          # 避免连续两次同一技能
@@ -263,7 +280,8 @@ func _throw_minions() -> void:
 		var cell := _random_walkable_cell_near(global_position, landing_spread_cells)
 		_throw_enemy(minion, _cell_center(cell), throw_duration + 0.08 * float(index), false)
 		thrown_minions += 1
-	print("[Boss] 抛出 %d 只小怪（累计 %d）" % [count, thrown_minions])
+	_summon_cooldown_left = summon_cooldown / (4.0 if debug_fast_skills else 1.0)
+	print("[Boss] 抛出 %d 只小怪（累计 %d，下次召唤冷却 %.0f 秒）" % [count, thrown_minions, _summon_cooldown_left])
 
 
 ## 技能 B：抛出 1 只自爆怪，落点 = Boss 停止移动时锁定的玩家位置，落地立即引爆
@@ -404,3 +422,14 @@ func _on_died() -> void:
 func debug_summary() -> String:
 	return "phase=P%d state=%d minions=%d bombs=%d charges=%d hp=%d" % [
 		_phase + 1, _state, thrown_minions, thrown_bombs, charge_count, current_health]
+
+## 场上还活着的小怪数量（不含 Boss 自己）
+func _count_alive_minions() -> int:
+	var parent := get_parent()
+	if parent == null:
+		return 0
+	var count := 0
+	for child in parent.get_children():
+		if child is Enemy and child != self and not (child as Enemy).is_dead:
+			count += 1
+	return count
