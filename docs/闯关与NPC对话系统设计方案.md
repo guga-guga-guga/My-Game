@@ -417,3 +417,52 @@ scene/enemy.gd         # 可选：金币掉落
 - **没有配置任何 MCP**（`User\mcp.json` 不存在，工作区无 `.vscode\mcp.json`）；
 - 本会话的 `bash` 工具不可用（`C:\Program Files\Git\bin\bash.exe` 不存在），因此无法执行 `npx`/`pip`/Godot headless；
 - 因你选择"只出方案"，本次**未修改任何游戏代码或场景**，只新增本文件。
+
+---
+
+## 12. M3 实现记录（Boss 关已验收 ✅ 2026-09-27）
+
+> 本节记录**已经实现并被用户确认**的规则，代码位置见各条右列。改动集中在
+> `scene/boss.gd` / `scene/battle/battle.gd` / `scene/arena/arena_generator.gd`。
+
+### 12.1 Boss 关的场地与目标
+| 项 | 规则 |
+|---|---|
+| 场地生成 | 走 `ArenaGenerator.MODE_BOSS`（**独立于普通关**）：内部整片开阔地、障碍只放 2~3 块且**每块 ≥ 2×2**、边界墙只有外圈 1 格 |
+| 通过性 | `is_boss_passable()`：只在"2×2 全空"的格子上 flood fill，必须能到达每道红门内侧 → **保证半径 16 的 Boss 不会卡墙**（1 格宽 = 16px 会卡） |
+| 目标 | **只有一条**：击败 Boss（无时限、无波次）；失败只有"玩家掉完血" |
+| 出生距离 | 玩家在离红门最远的地板格；Boss 从**离玩家最远的红门**出场；新增最小距离保证 —— 实测相距 **23~26 格** |
+| 红门涌怪 | Boss 关每 `boss_door_spawn_interval = 5` 秒从红门涌出 1 只普通敌人，场上小怪（不含 Boss）上限 `boss_door_alive_cap = 5` |
+
+### 12.2 Boss 技能（`scene/boss.gd`，extends `enemy.gd`）
+| 阶段 | 阈值 | 行为 |
+|---|---|---|
+| P1 | > 66% | 追击；技能池 = 抛小怪（冷却时用扔自爆怪顶） |
+| P2 | 33%~66% | 解锁**扔自爆怪** |
+| P3 | < 33% | 移速 ×1.5、技能间隔 8s → 5.5s |
+
+| 技能 | 规则 |
+|---|---|
+| **抛小怪** | 在 Boss 位置生成 3~5 只普通敌人（`z_index=10` 画在其上层）→ 抛物线丢到附近**可通行格** → 落地恢复 AI；**独立冷却 14 秒**、场上小怪上限 6 |
+| **扔自爆怪** | Boss 停住 → 锁定玩家此刻位置 → 抛出自爆怪 → 落到该点**立即引爆**。⚠️ 爆炸会伤到 Boss 自己 —— **这是有意的设计**（玩家可借此输出） |
+| **冲刺** | **始终可用**（不在随机池里）。触发：开局 ≥ `charge_unlock_delay=5` 秒 **且** 玩家距离 ≤ `charge_trigger_cells=5` 格（80px）**且** 冷却 `charge_cooldown=5` 秒结束 → 立即冲。<br>预警 = **长方形红色区域**（长 = 冲刺距离+24px、宽 = 2 格、α0.12→0.38 渐浓 + 亮红描边，`z_index=1` 高于地砖）+ 稳定黄光一次；<br>**闪光结束 → 冲刺结束期间完全免伤**（覆盖 `apply_damage()`），冲刺期间红圈最亮 |
+
+### 12.3 显示规则（全部代码生成、零美术）
+- 全项目字体统一为 `resources/font/IPix.ttf`（`project.godot` 的 `[gui] theme/custom_font`）；该字体缺 `：·　（）。、！？|` 等标点，已在全项目替换
+- Boss 外圈 = **两层很细的柔光环**（`Line2D`，内环 r21/w1.5/α0.5 + 外环 +3.5px/w3.3/α0.16），预警时变亮变粗
+- **无时限关卡删除时钟**；Boss 关把头顶绿条改成**红条并横向居中**（绑定 Boss 血量）+ 左端加「BOSS」字样；其他无时限关卡连绿条一起删除，并把**生命值图标+文字整体上移到原时间那一行**（横向不动）
+- 底部目标 HUD（CanvasLayer 屏幕空间、居中、黑描边）：第一行「目标: …」、第二行「第 N 层 · 进度 · 剩余时间」
+
+### 12.4 调试入口（都已接好）
+| 入口 | 用法 |
+|---|---|
+| 标题页「调试: 直接打 Boss」 | 跳过路线图直接进最终层 Boss 关（最常用） |
+| `battle.gd` → `Debug Goal Type` | 强制目标类型（survive/kill/clear_waves/boss） |
+| `battle.gd` → `Debug Fast Boss` / `Debug Instant Boss Win` | 加速 Boss 技能 / 模拟击败并验证"总结→回标题"链路 |
+| `boss.gd` → `Debug Force Phase` / `Debug Fast Skills` | 强制阶段（1~3）/ 技能加速 4 倍 |
+| `tools/*.gd` | `test_arena_generator`（含 Boss 场地 8/8 断言）、`test_level_goal`、`inspect_tileset`、`inspect_font`、`screenshot.ps1` |
+
+### 12.5 剩余待办
+- **M4** NPC 对话系统（地图 NPC + 靠近按 E + 底部对话框打字机 + 选项分支；`DialogueManager` 骨架已就位）
+- **M5** 商店 / 升级 + 金币（金币目前只预留了 `RunState.gold`，尚未产出）
+- **M6** 收尾：平衡、通关总结打磨、导出 exe（`release/` 已 gitignore）
