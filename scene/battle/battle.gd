@@ -26,6 +26,10 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 @export var debug_print: bool = true
 ## 调试: 加快 Boss 技能节奏（headless 自检用）
 @export var debug_fast_boss: bool = false
+## Boss 关：红门每隔多少秒涌出一只普通敌人
+@export var boss_door_spawn_interval: float = 5.0
+## Boss 关：场上小怪（不含 Boss）上限
+@export var boss_door_alive_cap: int = 5
 ## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
 @export var debug_instant_boss_win: bool = false
 
@@ -44,6 +48,7 @@ var _waves_finished := false
 var _wave_timer_left := 0.0
 var _boss_defeated := false
 var _boss: Enemy = null
+var _boss_title_label: Label = null
 var _last_result_won := false
 var _result_recorded := false
 
@@ -81,6 +86,7 @@ func _ready() -> void:
 	# ⑥ 刷怪:有波次表的关卡走波次推进；其余沿用父类的无限刷怪
 	if goal["type"] == LevelGoal.TYPE_BOSS:
 		_spawn_boss()
+		_start_boss_door_spawner()
 	elif _waves.is_empty():
 		_spawn_initial_enemies()
 		_start_enemy_spawn_timer()
@@ -161,6 +167,47 @@ func _update_waves(delta: float) -> void:
 	_wave_timer_left = maxf(float(_waves[_wave_index].get("delay", 1.2)), 0.0)
 
 
+## Boss 关：红门会持续"涌出"普通敌人（复用现有出怪点 —— 它们本来就落在红门上）
+func _start_boss_door_spawner() -> void:
+	var timer := Timer.new()
+	timer.name = "BossDoorSpawnTimer"
+	timer.wait_time = maxf(boss_door_spawn_interval, 1.0)
+	timer.timeout.connect(_on_boss_door_spawn)
+	add_child(timer)
+	timer.start()
+
+
+func _on_boss_door_spawn() -> void:
+	if is_result_displayed or _boss_defeated:
+		return
+	var boss_alive := 0
+	if _boss != null and is_instance_valid(_boss) and not _boss.is_dead:
+		boss_alive = 1
+	if _get_alive_enemy_count() - boss_alive >= boss_door_alive_cap:
+		return
+	if _try_spawn_enemy() and debug_print:
+		print("[Battle] 红门涌出一只敌人（场上共 %d）" % _get_alive_enemy_count())
+
+
+## 在红条左边加「BOSS」字样（和血条同层、世界空间，跟着角色走）
+func _add_boss_health_title(clock_bar: Sprite2D) -> void:
+	if _boss_title_label != null and is_instance_valid(_boss_title_label):
+		return
+	var hud_layer := $Player/HUDLayer as Node2D
+	if hud_layer == null:
+		return
+	var label := Label.new()
+	label.name = "BossHealthTitle"
+	label.text = "BOSS"
+	label.add_theme_font_size_override("font_size", 10)          # 世界空间会被相机放大 4 倍
+	label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	label.add_theme_constant_override("outline_size", 2)
+	hud_layer.add_child(label)
+	label.position = Vector2(time_bar_left_edge_x - 34.0, clock_bar.position.y - 7.0)
+	_boss_title_label = label
+
+
 ## Boss 关：从"离玩家最远的那个红门"里放出一只 Boss（复用出怪口的语义）
 func _spawn_boss() -> void:
 	var boss := BossScene.instantiate() as Enemy
@@ -227,6 +274,8 @@ func _on_boss_defeated() -> void:
 	var bar := $Player/HUDLayer/TimeBar as Sprite2D
 	if bar != null:
 		bar.visible = false          # Boss 死后收起红条
+	if _boss_title_label != null and is_instance_valid(_boss_title_label):
+		_boss_title_label.visible = false
 	if debug_print:
 		print("[Battle] Boss 已击败, 目标达成判定=%s" % str(LevelGoal.is_satisfied(goal, _goal_state())))
 
@@ -266,6 +315,7 @@ func _prepare_boss_health_bar(clock_bar: Sprite2D) -> void:
 		time_bar_left_edge_x = clock_bar.position.x - (time_bar_texture_width * time_bar_full_scale_x * 0.5)
 	else:
 		time_bar_left_edge_x = clock_bar.position.x
+	_add_boss_health_title(clock_bar)
 
 
 ## 其他无时限关卡：生命值图标 + 文字整体上移到"原时间那一行"（只改纵向）
