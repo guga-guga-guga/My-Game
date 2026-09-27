@@ -43,7 +43,8 @@ var spawn_count_per_tick: int = 1
 @onready var enemy_container: Node2D = $EnemyContainer
 @onready var enemy_spawn_points_root: Node2D = $EnemySpawnPoints
 @onready var enemy_spawn_timer: Timer = $EnemySpawnTimer
-@onready var canvas_layer: CanvasLayer = $Player/CanvasLayer
+# 2026-09-27 注释保留（该变量全项目未使用，且场景里已无 Player/CanvasLayer 节点，会在启动时刷 ERROR）：
+#@onready var canvas_layer: CanvasLayer = $Player/CanvasLayer
 
 @onready var hud_layer: Node2D = $Player/HUDLayer
 @onready var life_count_label: Label = $Player/HUDLayer/LifeCountLabel

@@ -59,7 +59,11 @@ func _build_ui() -> void:
 	box.add_child(_make_label(DESCRIPTION_TEXT, FONT_SIZE_BODY, COLOR_TEXT))
 	box.add_child(_make_spacer(16))
 	
-	var start_button := _make_button("开始游戏", "StartButton")
+	var run_button := _make_button("开始新局（闯关）", "StartRunButton")
+	run_button.pressed.connect(_on_start_run_button_pressed)
+	box.add_child(run_button)
+
+	var start_button := _make_button("经典模式（单关）", "StartButton")
 	start_button.pressed.connect(_on_start_button_pressed)
 	box.add_child(start_button)
 	
@@ -73,7 +77,7 @@ func _build_ui() -> void:
 		_build_records_text(), FONT_SIZE_SMALL, COLOR_HINT, HORIZONTAL_ALIGNMENT_LEFT))
 	
 	#让键盘 / 手柄也能直接开始：内置动作 ui_accept（回车、空格）会触发当前聚焦的按钮
-	start_button.grab_focus()
+	run_button.grab_focus()
 
 
 #背景分三层：纯色底 → 开场图 → 半透明遮罩（遮罩保证背景很花时文字依然看得清）
@@ -187,3 +191,6 @@ func _on_start_button_pressed() -> void:
 
 func _on_quit_button_pressed() -> void:
 	get_tree().quit()
+
+func _on_start_run_button_pressed() -> void:
+	GameFlow.start_new_run()
