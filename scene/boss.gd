@@ -44,6 +44,14 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var charge_speed: float = 240.0
 ## 冲刺预警时间（比其他技能短：闪一次黄光就冲）
 @export var charge_telegraph_time: float = 0.45
+
+@export_group("冲刺触发（独立于技能池，始终可用）")
+## 开局多少秒后才允许冲刺
+@export var charge_unlock_delay: float = 5.0
+## 玩家进入这个格数范围内就会触发冲刺（5 格 = 80 像素）
+@export var charge_trigger_cells: float = 5.0
+## 冲刺冷却（秒），避免连续冲个不停
+@export var charge_cooldown: float = 5.0
 @export var charge_duration: float = 1.1
 @export var landing_spread_cells: int = 6
 @export var sprite_scale: float = 2.0
@@ -74,9 +82,11 @@ var _outline_ring: Line2D = null
 var _outline_ring_outer: Line2D = null
 var _summon_cooldown_left := 0.0
 var _invulnerable := false
+var _elapsed := 0.0
+var _charge_cooldown_left := 0.0
 var _phase_flash_left := 0.0
 var _minion_configs: Array[EnemyConfig] = []
-var _telegraphs: Array[Sprite2D] = []
+var _telegraphs: Array[Node2D] = []
 
 # 场地数据（由 battle 注入）：把落点限制在"可通行格"上
 var _grid: Array = []
@@ -122,7 +132,9 @@ func _physics_process(delta: float) -> void:
 	if debug_fast_skills:
 		_skill_timer -= delta * 4.0
 	else:
-		_skill_timer -= delta
+		_elapsed += delta
+	_charge_cooldown_left = maxf(_charge_cooldown_left - delta, 0.0)
+	_skill_timer -= delta
 	if debug_fast_skills:
 		_summon_cooldown_left = maxf(_summon_cooldown_left - delta * 4.0, 0.0)
 	else:
@@ -158,8 +170,11 @@ func _physics_process(delta: float) -> void:
 		if _recover_left <= 0.0:
 			_state = State.CHASE
 			_set_flash(0.0)
-	elif _state == State.CHASE and _skill_timer <= 0.0 and not is_dead:
-		_begin_skill()
+	elif _state == State.CHASE and not is_dead:
+		if _should_start_charge():
+			_begin_charge()          # 冲刺优先：满足条件就冲
+		elif _skill_timer <= 0.0:
+			_begin_skill()
 
 	super._physics_process(delta)
 
@@ -214,6 +229,63 @@ func _current_skill_interval() -> float:
 	return base / 4.0 if debug_fast_skills else base
 
 
+## 冲刺触发判定：开局满 charge_unlock_delay 秒 + 玩家进入 charge_trigger_cells 格 + 冷却结束
+func _should_start_charge() -> bool:
+	if _charge_cooldown_left > 0.0 or _elapsed < charge_unlock_delay:
+		return false
+	if not is_instance_valid(target_player) or target_player.is_dead:
+		return false
+	return global_position.distance_to(target_player.global_position) <= charge_trigger_cells * TILE
+
+
+func _begin_charge() -> void:
+	_pending_skill = "charge"
+	_locked_target = target_player.global_position
+	_state = State.TELEGRAPH
+	_telegraph_left = charge_telegraph_time
+	_clear_telegraphs()
+	_show_charge_telegraph()
+	_set_flash(1.0)                       # 闪一次稳定黄光
+	_set_outline_intensity(1.0)
+	boss_skill.emit("charge", _locked_target)
+
+
+## 冲刺预警：一个长方形红色区域（从 Boss 指向锁定目标，长度=冲刺距离，宽度=2 格）
+func _show_charge_telegraph() -> void:
+	var parent := get_parent()
+	if parent == null:
+		return
+	var direction := _locked_target - global_position
+	if direction == Vector2.ZERO:
+		direction = Vector2.RIGHT
+	var length := charge_speed * charge_duration + 24.0
+	var half_width := TILE                                   # 宽度 2 格
+	var corners := PackedVector2Array([
+		Vector2(0.0, -half_width), Vector2(length, -half_width),
+		Vector2(length, half_width), Vector2(0.0, half_width)])
+	var area := Node2D.new()
+	area.name = "ChargeTelegraph"
+	area.global_position = global_position
+	area.rotation = direction.angle()
+	area.z_index = 1                                          # 高于地砖(0)，否则会被地面挡住
+	parent.add_child(area)
+	var fill := Polygon2D.new()
+	fill.polygon = corners
+	fill.color = Color(1.0, 0.15, 0.15, 0.28)
+	area.add_child(fill)
+	var edge := Line2D.new()
+	edge.points = corners
+	edge.closed = true
+	edge.width = 1.5
+	edge.default_color = Color(1.0, 0.3, 0.2, 0.9)
+	area.add_child(edge)
+	_telegraphs.append(area)
+	# 预警期间从淡到浓，提示玩家"这条道要冲了"
+	fill.color = Color(1.0, 0.15, 0.15, 0.12)
+	var tween := area.create_tween()
+	tween.tween_property(fill, "color", Color(1.0, 0.15, 0.15, 0.38), charge_telegraph_time)
+
+
 func _begin_skill() -> void:
 	_skill_timer = _current_skill_interval()
 	var next_skill := _pick_skill()
@@ -237,8 +309,7 @@ func _pick_skill() -> String:
 		pool.append("minions")
 	if _phase >= Phase.P2:
 		pool.append("bomb")
-	if _phase >= Phase.P2:
-		pool.append("charge")
+	# 冲刺不再进随机池：改成"开局 N 秒后玩家靠近就冲"（见 _should_start_charge）
 	if pool.is_empty():
 		# 抛小怪在冷却时不能空着（否则 P1 会长时间不出手）—— 用扔自爆怪顶上
 		return "bomb" if _phase < Phase.P2 else "charge"
@@ -256,8 +327,7 @@ func _show_telegraph(skill: String) -> void:
 			_spawn_telegraph(_cell_center(cell), 18.0)
 	elif skill == "bomb":
 		_spawn_telegraph(_snap_to_walkable(_locked_target), 22.0)
-	else:
-		_spawn_telegraph(_locked_target, 20.0)
+	# charge 的预警是长方形区域，由 _show_charge_telegraph() 单独画
 
 
 func _spawn_telegraph(position_world: Vector2, radius_px: float) -> void:
@@ -297,6 +367,7 @@ func _execute_pending_skill() -> void:
 		if _charge_direction == Vector2.ZERO:
 			_charge_direction = Vector2.RIGHT
 		charge_count += 1
+		_charge_cooldown_left = charge_cooldown
 		_state = State.CHARGE
 		_charge_left = charge_duration
 		_invulnerable = true                               # 冲刺全程免伤（用户要求）
