@@ -215,52 +215,52 @@ func _on_boss_defeated() -> void:
 ##   Boss 关：删掉时钟；绿条 → 红条并**横向居中**，绑定 Boss 血量；生命值留在原位（避免压到居中红条）
 ##   其他无时限关卡（clear_waves）：删掉时钟与绿条；生命值图标 + 文字**整体上移到原时间那一行**（横向不动）
 func _apply_goal_hud_layout() -> void:
-	var time_icon := $Player/HUDLayer/TimeIcon as Sprite2D
-	var time_bar := $Player/HUDLayer/TimeBar as Sprite2D
-	var life_icon := $Player/HUDLayer/LifeIcon as Sprite2D
-	var life_label := $Player/HUDLayer/LifeCountLabel as Label
+	var clock_icon := $Player/HUDLayer/TimeIcon as Sprite2D
+	var clock_bar := $Player/HUDLayer/TimeBar as Sprite2D
+	var life_icon_node := $Player/HUDLayer/LifeIcon as Sprite2D
+	var life_label_node := $Player/HUDLayer/LifeCountLabel as Label
 	if LevelGoal.time_limit(goal) > 0.0:
 		return                                   # 有时限：完全保持原样
-	if time_icon != null:
-		time_icon.visible = false                # 无时限：时钟一律删除
+	if clock_icon != null:
+		clock_icon.visible = false               # 无时限：时钟一律删除
 	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
-		_prepare_boss_health_bar(time_bar)
+		_prepare_boss_health_bar(clock_bar)
 	else:
-		if time_bar != null:
-			time_bar.visible = false             # 其他无时限：绿条也删掉
-		_move_life_display_up_to_time_row(life_icon, life_label, time_icon, time_bar)
+		if clock_bar != null:
+			clock_bar.visible = false            # 其他无时限：绿条也删掉
+		_move_life_display_up_to_time_row(life_icon_node, life_label_node, clock_icon, clock_bar)
 
 
 ## Boss 关：绿条 → 红条（居中 + 之后由 _update_time_bar 绑定 Boss 血量）
-func _prepare_boss_health_bar(time_bar: Sprite2D) -> void:
-	if time_bar == null:
+func _prepare_boss_health_bar(clock_bar: Sprite2D) -> void:
+	if clock_bar == null:
 		return
-	time_bar.visible = true
-	time_bar.modulate = Color(1.0, 0.28, 0.28)
-	time_bar.position.x = 0.0
+	clock_bar.visible = true
+	clock_bar.modulate = Color(1.0, 0.28, 0.28)
+	clock_bar.position.x = 0.0
 	# 居中后必须重算左边缘（父类 _setup_hud 是按原位置算的），否则条会往右跑
-	if time_bar.centered:
-		time_bar_left_edge_x = time_bar.position.x - (time_bar_texture_width * time_bar_full_scale_x * 0.5)
+	if clock_bar.centered:
+		time_bar_left_edge_x = clock_bar.position.x - (time_bar_texture_width * time_bar_full_scale_x * 0.5)
 	else:
-		time_bar_left_edge_x = time_bar.position.x
+		time_bar_left_edge_x = clock_bar.position.x
 
 
 ## 其他无时限关卡：生命值图标 + 文字整体上移到"原时间那一行"（只改纵向）
-func _move_life_display_up_to_time_row(life_icon: Sprite2D, life_label: Label, time_icon: Sprite2D, time_bar: Sprite2D) -> void:
+func _move_life_display_up_to_time_row(life_icon_node: Sprite2D, life_label_node: Label, clock_icon: Sprite2D, clock_bar: Sprite2D) -> void:
 	var time_row_y := 0.0
-	if time_icon != null:
-		time_row_y = time_icon.position.y
-	elif time_bar != null:
-		time_row_y = time_bar.position.y
+	if clock_icon != null:
+		time_row_y = clock_icon.position.y
+	elif clock_bar != null:
+		time_row_y = clock_bar.position.y
 	else:
 		return
-	if life_icon == null:
+	if life_icon_node == null:
 		return
-	var delta := time_row_y - life_icon.position.y
-	life_icon.position.y += delta
-	if life_label != null:
-		life_label.offset_top += delta
-		life_label.offset_bottom += delta
+	var delta := time_row_y - life_icon_node.position.y
+	life_icon_node.position.y += delta
+	if life_label_node != null:
+		life_label_node.offset_top += delta
+		life_label_node.offset_bottom += delta
 
 
 ## Boss 血量比例（0~1）

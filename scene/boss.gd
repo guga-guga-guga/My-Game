@@ -43,6 +43,8 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var charge_duration: float = 1.1
 @export var landing_spread_cells: int = 6
 @export var sprite_scale: float = 2.0
+## 身后那层红色剪影的放大倍率（越大红边越粗）
+@export var outline_scale: float = 1.14
 ## 抛小怪的独立冷却（比其它技能长得多，避免场上小怪堆积 —— 用户反馈召唤太频繁）
 @export var summon_cooldown: float = 14.0
 ## 场上小怪（不含 Boss）超过这个数量就不再抛
@@ -62,6 +64,7 @@ var _pending_skill := ""
 var _locked_target := Vector2.ZERO
 var _charge_direction := Vector2.ZERO
 var _glow_material: ShaderMaterial = null
+var _outline_sprite: AnimatedSprite2D = null
 var _summon_cooldown_left := 0.0
 var _minion_configs: Array[EnemyConfig] = []
 var _telegraphs: Array[Sprite2D] = []
@@ -81,6 +84,7 @@ func _ready() -> void:
 	super._ready()
 	_setup_glow()
 	animated_sprite.scale = Vector2(sprite_scale, sprite_scale)
+	_setup_outline()
 	_collect_minion_configs()
 	_skill_timer = _current_skill_interval()
 	died.connect(_on_died)
@@ -135,6 +139,7 @@ func _physics_process(delta: float) -> void:
 	elif _state == State.CHASE and _skill_timer <= 0.0 and not is_dead:
 		_begin_skill()
 
+	_sync_outline()
 	super._physics_process(delta)
 
 
@@ -284,7 +289,9 @@ func _throw_minions() -> void:
 	print("[Boss] 抛出 %d 只小怪（累计 %d，下次召唤冷却 %.0f 秒）" % [count, thrown_minions, _summon_cooldown_left])
 
 
-## 技能 B：抛出 1 只自爆怪，落点 = Boss 停止移动时锁定的玩家位置，落地立即引爆
+## 技能 B：抛出 1 只自爆怪，落点 = Boss 停止移动时锁定的玩家位置，落地立即引爆。
+## ⚠️ 注意：自爆怪的爆炸会伤害"玩家和敌人"，所以 **Boss 也会被自己的自爆怪炸到**。
+##    这是**有意的设计**（已与用户确认）：玩家可以把 Boss 的投掷物当作对 Boss 的输出手段。
 func _throw_bomb() -> void:
 	var bomb := _spawn_minion(BombConfig)
 	if bomb == null:
@@ -295,8 +302,8 @@ func _throw_bomb() -> void:
 	print("[Boss] 抛出自爆怪 → 落点 %s（累计 %d）" % [str(landing.round()), thrown_bombs])
 
 
-func _spawn_minion(config: EnemyConfig) -> Enemy:
-	if config == null:
+func _spawn_minion(minion_config: EnemyConfig) -> Enemy:
+	if minion_config == null:
 		return null
 	var parent := get_parent()
 	if parent == null:
@@ -306,7 +313,7 @@ func _spawn_minion(config: EnemyConfig) -> Enemy:
 		return null
 	parent.add_child(minion)
 	minion.global_position = global_position
-	minion.setup(config, target_player)
+	minion.setup(minion_config, target_player)
 	minion.set_airborne(true)                 # 空中：暂停 AI、不吃接触伤害、画在 Boss 之上
 	return minion
 
@@ -390,11 +397,38 @@ func _snap_to_walkable(position_world: Vector2) -> Vector2:
 
 # ---------------- 显示（shader）与收尾 ----------------
 
+## 红色外描边：在 Boss 身后叠一层"放大版红色剪影"。
+## 比 shader 采样法可靠（不依赖贴图是否有透明留白），代价只是多画一个 Sprite。
+func _setup_outline() -> void:
+	_outline_sprite = AnimatedSprite2D.new()
+	_outline_sprite.name = "BossOutline"
+	_outline_sprite.z_index = -1                 # 画在本体后面
+	_outline_sprite.z_as_relative = true
+	_outline_sprite.modulate = Color(1.0, 0.12, 0.12, 1.0)
+	_outline_sprite.scale = Vector2(sprite_scale, sprite_scale) * outline_scale
+	add_child(_outline_sprite)
+	_sync_outline()
+
+
+## 把剪影的动画/朝向/帧/位置同步成和本体一致（"就是本体放大一点"）
+func _sync_outline() -> void:
+	if _outline_sprite == null or not is_instance_valid(_outline_sprite) or animated_sprite == null:
+		return
+	if _outline_sprite.sprite_frames != animated_sprite.sprite_frames:
+		_outline_sprite.sprite_frames = animated_sprite.sprite_frames
+	_outline_sprite.animation = animated_sprite.animation
+	_outline_sprite.frame = animated_sprite.frame
+	_outline_sprite.flip_h = animated_sprite.flip_h
+	_outline_sprite.flip_v = animated_sprite.flip_v
+	_outline_sprite.position = animated_sprite.position
+	_outline_sprite.scale = animated_sprite.scale * outline_scale
+
+
 func _setup_glow() -> void:
-	var material := ShaderMaterial.new()
-	material.shader = BossGlowShader
-	animated_sprite.material = material
-	_glow_material = material
+	var glow_material := ShaderMaterial.new()
+	glow_material.shader = BossGlowShader
+	animated_sprite.material = glow_material
+	_glow_material = glow_material
 	_set_flash(0.0)
 
 

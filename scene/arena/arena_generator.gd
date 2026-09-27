@@ -551,7 +551,7 @@ func is_boss_passable(data: Dictionary) -> bool:
 			visited[next] = true
 			queue.append(next)
 	for door in data["doors"]:
-		var inner: Vector2i = door["cell"] + _inward_step(door, w, h)
+		var inner: Vector2i = door["cell"] + _inward_step(door, w)
 		var reachable := false
 		for offset in [Vector2i.ZERO, Vector2i(0, -1), Vector2i(-1, 0), Vector2i(-1, -1)]:
 			if visited.has(inner + offset):
@@ -571,7 +571,7 @@ func _is_2x2_clear(grid: Array, w: int, h: int, cell: Vector2i) -> bool:
 		and grid[(cell.y + 1) * w + cell.x + 1] == CELL_FLOOR)
 
 
-func _inward_step(door: Dictionary, w: int, h: int) -> Vector2i:
+func _inward_step(door: Dictionary, w: int) -> Vector2i:
 	var cell: Vector2i = door["cell"]
 	if cell.x <= 0:
 		return Vector2i.RIGHT
