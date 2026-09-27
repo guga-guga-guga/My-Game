@@ -59,11 +59,11 @@ func _build_ui() -> void:
 	box.add_child(_make_label(DESCRIPTION_TEXT, FONT_SIZE_BODY, COLOR_TEXT))
 	box.add_child(_make_spacer(16))
 	
-	var run_button := _make_button("开始新局，闯关 ", "StartRunButton")
+	var run_button := _make_button("开始新局，闯关", "StartRunButton")
 	run_button.pressed.connect(_on_start_run_button_pressed)
 	box.add_child(run_button)
 
-	var start_button := _make_button("经典模式，单关 ", "StartButton")
+	var start_button := _make_button("经典模式，单关", "StartButton")
 	start_button.pressed.connect(_on_start_button_pressed)
 	box.add_child(start_button)
 
