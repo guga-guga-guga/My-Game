@@ -7,3 +7,6 @@
 
 # 开发过程截图（不入库）
 /docs/screenshots/
+
+# harness 视觉工具产物（不入库）
+/.dsh-vision-router/
