@@ -17,10 +17,18 @@ const FONT_SIZE_SUBTITLE := 18
 const FONT_SIZE_BODY := 16
 const FONT_SIZE_SMALL := 14
 
+## 右侧战绩面板（用户要求）+ 底部按钮排的边距
+const RECORDS_PANEL_WIDTH := 420.0
+const RECORDS_PANEL_MARGIN := 24.0
+const TITLE_BUTTON_BOTTOM_MARGIN := 36.0
+
 #标题字体留 null 就用 Godot 默认字体 结算弹窗用的也是它，能显示中文 
 #项目自带的 IPix.ttf 是像素字体，若它包含你需要的汉字，改成下面这样就能换成像素风:
 #const CUSTOM_FONT: Font = preload("res://resources/font/IPix.ttf")
 const CUSTOM_FONT: Font = null
+
+var _records_panel: PanelContainer = null
+var _button_bar: HBoxContainer = null
 
 const TITLE_TEXT := "唯时代尔"
 const DESCRIPTION_TEXT := "操作说明\nWASD 移动 ， 方向键射击\n\n撑满倒计时即通关，活得越久，杀得越多越好"
@@ -45,43 +53,111 @@ func _ready() -> void:
 
 
 #代码生成整个界面:一个纵向容器装下所有内容，整体垂直居中
+#代码生成整个界面（用户定的排版）:
+#   中部     标题 + 操作说明
+#   中间下方  一整排按钮
+#   右侧     最近战绩
 func _build_ui() -> void:
 	_add_background()
-	
+
+	# ---- 中部:标题 + 操作说明 ----
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_theme_constant_override("separation", 8)
+	box.offset_bottom = -150.0            # 视觉中心略上移，给底部按钮排留位置
 	add_child(box)
-	
+
 	if SHOW_TITLE_TEXT:
 		box.add_child(_make_label(TITLE_TEXT, FONT_SIZE_TITLE, COLOR_TITLE))
 	box.add_child(_make_label(DESCRIPTION_TEXT, FONT_SIZE_BODY, COLOR_TEXT))
-	box.add_child(_make_spacer(16))
-	
+
+	# ---- 中间下方:一整排按钮 ----
+	_button_bar = HBoxContainer.new()
+	_button_bar.name = "ButtonBar"
+	_button_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_button_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_button_bar.offset_left = 0.0
+	_button_bar.offset_right = 0.0
+	_button_bar.offset_top = -TITLE_BUTTON_BOTTOM_MARGIN
+	_button_bar.offset_bottom = -TITLE_BUTTON_BOTTOM_MARGIN
+	_button_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	_button_bar.add_theme_constant_override("separation", 16)
+	add_child(_button_bar)
+
 	var run_button := _make_button("开始新局，闯关", "StartRunButton")
 	run_button.pressed.connect(_on_start_run_button_pressed)
-	box.add_child(run_button)
+	_button_bar.add_child(run_button)
 
 	var start_button := _make_button("经典模式，单关", "StartButton")
 	start_button.pressed.connect(_on_start_button_pressed)
-	box.add_child(start_button)
+	_button_bar.add_child(start_button)
 
 	var boss_button := _make_button("调试: 直接打 Boss", "DebugBossButton")
 	boss_button.pressed.connect(_on_debug_boss_pressed)
-	box.add_child(boss_button)
-	
+	_button_bar.add_child(boss_button)
+
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
-	box.add_child(quit_button)
-	
-	box.add_child(_make_spacer(22))
-	box.add_child(_make_label("最近 10 局战绩", FONT_SIZE_SUBTITLE, COLOR_TITLE))
-	box.add_child(_make_label(
-		_build_records_text(), FONT_SIZE_SMALL, COLOR_HINT, HORIZONTAL_ALIGNMENT_LEFT))
-	
+	_button_bar.add_child(quit_button)
+
+	# ---- 右侧:最近战绩 ----
+	_build_records_panel()
+
 	#让键盘 / 手柄也能直接开始:内置动作 ui_accept 回车，空格 会触发当前聚焦的按钮
 	run_button.grab_focus()
+	_check_title_layout.call_deferred()
+
+
+#右侧战绩面板（用户要求：战绩放在界面右侧）
+func _build_records_panel() -> void:
+	_records_panel = PanelContainer.new()
+	_records_panel.name = "RecordsPanel"
+	_records_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_records_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_records_panel.grow_vertical = Control.GROW_DIRECTION_END
+	_records_panel.offset_left = -RECORDS_PANEL_WIDTH
+	_records_panel.offset_right = -RECORDS_PANEL_MARGIN
+	_records_panel.offset_top = RECORDS_PANEL_MARGIN
+	_records_panel.offset_bottom = RECORDS_PANEL_MARGIN
+	add_child(_records_panel)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.05, 0.05, 0.06, 0.72)
+	style.border_color = Color(1.0, 0.87, 0.55, 0.55)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(6)
+	style.set_content_margin_all(12)
+	_records_panel.add_theme_stylebox_override("panel", style)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	_records_panel.add_child(box)
+	box.add_child(_make_label("最近 10 局战绩", FONT_SIZE_SUBTITLE, COLOR_TITLE))
+	box.add_child(_make_label(_build_records_text(), FONT_SIZE_SMALL, COLOR_HINT,
+		HORIZONTAL_ALIGNMENT_LEFT))
+
+
+#自检:战绩面板是否在右半屏、按钮排是否在底部中间（headless 也能验）
+func _check_title_layout() -> void:
+	if _records_panel == null or _button_bar == null:
+		return
+	var screen := Vector2(get_viewport().get_visible_rect().size)
+	var panel := _records_panel.get_global_rect()
+	var bar := _button_bar.get_global_rect()
+	# 按钮排本身铺满宽度，真正要看的是"第一个按钮左边缘 ~ 最后一个按钮右边缘"是否居中
+	var group_left := INF
+	var group_right := -INF
+	for child in _button_bar.get_children():
+		var button := child as Control
+		if button == null:
+			continue
+		group_left = minf(group_left, button.get_global_rect().position.x)
+		group_right = maxf(group_right, button.get_global_rect().end.x)
+	print("[Title自检] 屏幕 %dx%d | 战绩面板 位置%s 尺寸%dx%d 右边距%d | 按钮组 %d~%d 宽%d 中心%d(屏幕中心%d) 距底%d" % [
+		int(screen.x), int(screen.y), str(panel.position), int(panel.size.x), int(panel.size.y),
+		int(screen.x - panel.end.x), int(group_left), int(group_right), int(group_right - group_left),
+		int((group_left + group_right) * 0.5), int(screen.x * 0.5), int(screen.y - bar.end.y)])
+
 
 
 #背景分三层:纯色底 到 开场图 到 半透明遮罩 遮罩保证背景很花时文字依然看得清 
@@ -131,12 +207,22 @@ func _build_records_text() -> String:
 		var state := "未通关"
 		if bool(record_data.get("won", false)):
 			state = "通关"
-		lines.append("第 %d 局  存活 %s 秒  击杀 %d  %s" % [
-			int(record_data.get("index", 0)),
-			_format_seconds(float(record_data.get("elapsed", 0.0))),
-			int(record_data.get("kills", 0)),
-			state,
-		])
+		var floor_reached := int(record_data.get("floor", 0))
+		if floor_reached > 0:
+			# 闯关模式（M4 起）：用时 = 整局时间
+			lines.append("第 %d 局  到达第 %d 层  用时 %s 秒  击杀 %d  %s" % [
+				int(record_data.get("index", 0)), floor_reached,
+				_format_seconds(float(record_data.get("elapsed", 0.0))),
+				int(record_data.get("kills", 0)), state,
+			])
+		else:
+			# 经典模式：单关，用时就是存活时间
+			lines.append("第 %d 局  存活 %s 秒  击杀 %d  %s" % [
+				int(record_data.get("index", 0)),
+				_format_seconds(float(record_data.get("elapsed", 0.0))),
+				int(record_data.get("kills", 0)),
+				state,
+			])
 	
 	if lines.is_empty():
 		return "还没有战绩，先来一局吧"

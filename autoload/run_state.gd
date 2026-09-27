@@ -49,6 +49,9 @@ var route: Array = []
 ## 字段: floor / node_type / goal_text / won / kills / elapsed / gold_gained / gold_total / health / max_health
 var last_level_report: Dictionary = {}
 
+## 本局是否已经写过战绩（避免重复结算写多条）
+var _record_written := false
+
 
 ## 开始新的一局:把全部进度清零
 func reset() -> void:
@@ -70,6 +73,7 @@ func reset() -> void:
 	route.clear()
 	shop_buy_count.clear()
 	last_level_report.clear()
+	_record_written = false
 	run_started.emit()
 	floor_changed.emit(floor_index)
 	gold_changed.emit(gold)
@@ -240,4 +244,8 @@ func shop_level(key: String) -> int:
 func finish_run(did_clear: bool) -> void:
 	cleared = did_clear
 	is_active = false
+	# 一局只写一条战绩（M4 闯关模式原来完全没写，开始界面右侧的"最近战绩"一直是空的）
+	if not _record_written:
+		_record_written = true
+		RoundRecords.add_record(run_elapsed, total_kills, did_clear, floor_index)
 	run_finished.emit(did_clear)
