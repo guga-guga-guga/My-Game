@@ -16,6 +16,11 @@ const WAYPOINT_REACHED_DISTANCE := 5.0
 #留出余量才能避免被物理分离反复推挤，咬在墙角
 const BODY_RADIUS_INSET := 2.0
 
+## 被"投掷"在空中：暂停 AI 与物理、关闭接触伤害、抬高绘制层级（Boss 技能用）
+var is_airborne: bool = false
+## 暂停 AI（Boss 施法/硬直用），但不改动碰撞与层级
+var ai_suspended: bool = false
+
 enum DeathSequenceStage {
 	NONE,
 	DEATH,
@@ -121,6 +126,9 @@ func _physics_process(delta: float) -> void:
 	if is_dead:
 		velocity = Vector2.ZERO
 		return
+	if ai_suspended:
+		velocity = Vector2.ZERO
+		return
 		
 	if not is_instance_valid(target_player) or target_player.is_dead:
 		velocity = Vector2.ZERO
@@ -139,6 +147,32 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 #根据配置资源刷新数值，碰撞大小和默认动画
+## 暂停/恢复 AI（Boss 施法与硬直时使用）
+func set_ai_suspended(value: bool) -> void:
+	ai_suspended = value
+	if value:
+		velocity = Vector2.ZERO
+		current_path = PackedVector2Array()
+
+
+## 进入/退出"空中投掷态"：空中时不吃接触伤害、不参与碰撞、画在 Boss 之上
+func set_airborne(value: bool) -> void:
+	is_airborne = value
+	ai_suspended = value
+	z_index = 10 if value else 0
+	collision_shape.set_deferred("disabled", value)
+	touch_damage_shape.set_deferred("disabled", value)
+	touch_damage_area.set_deferred("monitoring", not value)
+	if value:
+		velocity = Vector2.ZERO
+		current_path = PackedVector2Array()
+
+
+## 立刻进入死亡/爆炸流程（自爆怪被投掷落地时调用；自爆敌会走到爆炸阶段）
+func explode_now() -> void:
+	_die()
+
+
 func _apply_config() -> void:
 	if config == null:
 		return

@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="EnemyConfig" format=3]
+
+[ext_resource type="SpriteFrames" path="res://resources/animation/enemy_basic.tres" id="1_frames"]
+[ext_resource type="Script" path="res://resources/config/enemy_config.gd" id="2_script"]
+[ext_resource type="Script" path="res://resources/config/pickup_config.gd" id="3_pickup"]
+[ext_resource type="Resource" path="res://resources/config/pickup_speed.tres" id="4_speed"]
+[ext_resource type="Resource" path="res://resources/config/pickup_rapid.tres" id="5_rapid"]
+[ext_resource type="Resource" path="res://resources/config/pickup_spiral.tres" id="6_spiral"]
+
+[resource]
+script = ExtResource("2_script")
+display_name = "Boss"
+max_health = 120
+move_speed = 28.0
+collision_radius = 16.0
+enemy_frames = ExtResource("1_frames")
+explode_on_death = true
+explosion_damage = 2
+explosion_radius = 56.0
+pickup_drop_chance = 1.0
+pickup_drop_configs = Array[ExtResource("3_pickup")]([ExtResource("4_speed"), ExtResource("5_rapid"), ExtResource("6_spiral")])
