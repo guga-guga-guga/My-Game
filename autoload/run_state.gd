@@ -193,6 +193,13 @@ const SHOP_KEYS: Array[String] = ["health", "fire_rate", "damage"]
 const SHOP_PRICE_HEALTH := 15        ## 生命上限 +1 的初始价
 const SHOP_PRICE_FIRE_RATE := 25     ## 射速 +10% 的初始价
 const SHOP_PRICE_DAMAGE := 40        ## 子弹伤害 +1 的初始价
+const SHOP_PRICE_HEAL := 30          ## 恢复血量：**固定价**，不随购买次数上涨
+
+## 商店货架（按用户要求的分类与顺序）：道具 / 加成
+const SHOP_SHELVES: Array = [
+	{"title": "道具", "keys": ["health", "heal"]},
+	{"title": "加成", "keys": ["fire_rate", "damage"]},
+]
 const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
 
 ## 本局各商品已买次数 key -> int 
@@ -201,6 +208,8 @@ var shop_buy_count: Dictionary = {}
 
 ## 当前价格 = 初始价 + 初始价的一半 * 已买次数
 func shop_price(key: String) -> int:
+	if key == "heal":
+		return SHOP_PRICE_HEAL          # 固定 30 金
 	var base := 0
 	match key:
 		"health":
@@ -217,6 +226,15 @@ func shop_price(key: String) -> int:
 
 ## 买一件：钱不够返回 false（不扣钱也不加属性）
 func shop_buy(key: String) -> bool:
+	if key == "heal":
+		# 恢复血量：血满不让买（省得白花钱），买了直接回满
+		if current_health >= max_health:
+			return false
+		if not try_spend_gold(SHOP_PRICE_HEAL):
+			return false
+		current_health = max_health
+		health_changed.emit(current_health, max_health)
+		return true
 	if not SHOP_KEYS.has(key):
 		return false
 	if not try_spend_gold(shop_price(key)):

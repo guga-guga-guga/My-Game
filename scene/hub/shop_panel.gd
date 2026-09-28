@@ -12,12 +12,17 @@ const PANEL_MARGIN_X := 220.0
 const PANEL_MARGIN_Y := 60.0
 const PRICE_WIDTH := 220.0
 
-const ITEM_KEYS: Array[String] = ["health", "fire_rate", "damage"]
+## 可选商品的平面顺序（和 RunState.SHOP_SHELVES 一致：道具 -> 加成）
+const ITEM_KEYS: Array[String] = ["health", "heal", "fire_rate", "damage"]
 const ITEM_TITLES := {
 	"health": "生命上限 +1",
+	"heal": "恢复血量",
 	"fire_rate": "射速 +10%",
 	"damage": "子弹伤害 +1",
 }
+## 类别之间的分隔（用户要求用 --- 隔开）
+const SEPARATOR_TEXT := "---"
+const CATEGORY_FONT_SIZE := 22
 
 var _panel: PanelContainer = null
 var _title: Label = null
@@ -48,6 +53,9 @@ func _ready() -> void:
 	set_process(false)
 	if not RunState.gold_changed.is_connected(_on_gold_changed):
 		RunState.gold_changed.connect(_on_gold_changed)
+	# 生命变化也要刷新：买了「生命上限 +1」后血又满了，「恢复血量」那行要跟着变回"血量已满"
+	if not RunState.health_changed.is_connected(_on_health_changed):
+		RunState.health_changed.connect(_on_health_changed)
 
 
 func _build_ui() -> void:
@@ -93,8 +101,17 @@ func _build_ui() -> void:
 	_row_box = VBoxContainer.new()
 	_row_box.add_theme_constant_override("separation", 4)
 	box.add_child(_row_box)
-	for index in range(ITEM_KEYS.size()):
-		_make_row(index, String(ITEM_TITLES[ITEM_KEYS[index]]))
+	# 按分类铺货架：分类标题 + 该类的商品行，类别之间用 --- 隔开
+	var flat_index := 0
+	for shelf_index in range(RunState.SHOP_SHELVES.size()):
+		var shelf: Dictionary = RunState.SHOP_SHELVES[shelf_index]
+		if shelf_index > 0:
+			_make_text_line(SEPARATOR_TEXT, Color(0.42, 0.45, 0.50), BODY_FONT_SIZE)
+		_make_text_line(String(shelf.get("title", "")), Color(0.70, 0.85, 1.0), CATEGORY_FONT_SIZE)
+		for key in shelf.get("keys", []):
+			_make_row(flat_index, String(ITEM_TITLES.get(String(key), String(key))))
+			flat_index += 1
+	# 「离开」永远在所有类别之后（用户要求：离开和按键提示固定在界面最下方）
 	_make_row(ITEM_KEYS.size(), "离开")
 
 	_message = Label.new()
@@ -106,6 +123,16 @@ func _build_ui() -> void:
 	_hint.add_theme_color_override("font_color", Color(0.66, 0.70, 0.74))
 	_hint.text = "W/S 选择   E 购买   ESC 退出"
 	box.add_child(_hint)
+
+
+## 分类标题 / --- 分隔这类纯文字行（不可选、不可点）
+func _make_text_line(text: String, color: Color, font_size: int) -> void:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_row_box.add_child(label)
 
 
 ## 一行 = 左边名称、右边价格；整行可点（鼠标）
@@ -147,6 +174,8 @@ func _refresh() -> void:
 		var key: String = ITEM_KEYS[index]
 		var price := RunState.shop_price(key)
 		var affordable := RunState.gold >= price
+		if key == "heal":
+			affordable = affordable and RunState.current_health < RunState.max_health
 		var chosen := index == _selected
 		var name_color := Color(0.88, 0.89, 0.92)
 		var price_color := Color(1.0, 0.90, 0.60)
@@ -158,7 +187,11 @@ func _refresh() -> void:
 			price_color = Color(1.0, 0.95, 0.70)
 		_row_names[index].text = ("> " if chosen else "  ") + String(ITEM_TITLES[key])
 		_row_names[index].add_theme_color_override("font_color", name_color)
-		_row_prices[index].text = "%d 金" % price
+		# 恢复血量：血满时显示"血量已满"，省得玩家以为能买
+		if key == "heal" and RunState.current_health >= RunState.max_health:
+			_row_prices[index].text = "血量已满"
+		else:
+			_row_prices[index].text = "%d 金" % price
 		_row_prices[index].add_theme_color_override("font_color", price_color)
 	# 最后一行是「离开」
 	var leave_index: int = ITEM_KEYS.size()
@@ -176,6 +209,9 @@ func _activate_selected() -> void:
 		return
 	var key: String = ITEM_KEYS[_selected]
 	var price := RunState.shop_price(key)
+	if key == "heal" and RunState.current_health >= RunState.max_health:
+		_message.text = "血量已满 不用买"
+		return
 	if not RunState.shop_buy(key):
 		_message.text = "金币不够 还差 %d" % maxi(price - RunState.gold, 0)
 		return
@@ -197,6 +233,11 @@ func _on_row_gui_input(event: InputEvent, index: int) -> void:
 
 
 func _on_gold_changed(_amount: int) -> void:
+	if _open:
+		_refresh()
+
+
+func _on_health_changed(_current: int, _maximum: int) -> void:
 	if _open:
 		_refresh()
 
@@ -236,6 +277,34 @@ func debug_selected_key() -> String:
 
 func debug_message() -> String:
 	return _message.text
+
+
+## 供自检：内容的最低高度
+func debug_content_height() -> float:
+	var content := _row_box.get_parent() as Control
+	return content.get_combined_minimum_size().y if content != null else 0.0
+
+
+## 供自检：内容有没有超出面板（加了分类标题和分隔行之后行数变多）
+func debug_content_fits() -> bool:
+	var content := _row_box.get_parent() as Control
+	if content == null:
+		return true
+	return content.get_combined_minimum_size().y <= _panel.size.y
+
+
+## 供自检：货架从上往下每行的纯文本（已去掉选中标记），最后一行按键提示
+func debug_layout_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for child in _row_box.get_children():
+		if child is Label:
+			lines.append((child as Label).text.strip_edges())
+		elif child is HBoxContainer:
+			var name_label := (child as HBoxContainer).get_child(0) as Label
+			if name_label != null:
+				lines.append(name_label.text.replace("> ", "").strip_edges())
+	lines.append("HINT:" + _hint.text)
+	return lines
 
 
 func debug_row_text(index: int) -> String:
