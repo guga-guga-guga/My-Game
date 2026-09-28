@@ -31,6 +31,9 @@ var _records_panel: PanelContainer = null
 var _button_bar: VBoxContainer = null
 
 const TITLE_TEXT := "唯时代尔"
+## 标题下面的说明：只留操作说明（"撑满倒计时即通关…"那句按用户要求去掉了）
+const DESCRIPTION_TEXT := "操作说明
+WASD 移动 ， 方向键射击"
 
 #开场背景图Godot 已经为它生成过 .import，正常可以直接加载
 const BACKGROUND_TEXTURE_PATH := "res://resources/texture/开场.png"
@@ -75,7 +78,7 @@ func _build_ui() -> void:
 
 	if SHOW_TITLE_TEXT:
 		box.add_child(_make_label(TITLE_TEXT, FONT_SIZE_TITLE, COLOR_TITLE))
-	# 用户要求：标题下面不放说明文字
+	box.add_child(_make_label(DESCRIPTION_TEXT, FONT_SIZE_BODY, COLOR_TEXT))
 
 	# ---- 中间下方:原来的四个按钮竖排，整组贴在下方（只下移，不改成横排）----
 	_button_bar = VBoxContainer.new()
