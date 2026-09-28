@@ -666,22 +666,27 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 ### 19.1 曲目分配
 | 场景 | 曲子 |
 |---|---|
-| 大厅（Hub 中间地图） | `1-27 Journey of the Prairie King (Overworld).mp3` |
+| 大厅（Hub 中间地图）+ 标题界面 | `1-27 Journey of the Prairie King (Overworld).mp3` |
 | BOSS 战（第 5 / 10 层） | `1-29 Journey of the Prairie King (Final Boss & Ending).mp3` |
-| 其余（普通关 / 精英关 / 经典模式 / 标题界面） | `1-28 Journey of the Prairie King (The Outlaw).mp3` |
+| 其余（普通关 / 精英关 / 经典模式） | `1-28 Journey of the Prairie King (The Outlaw).mp3` |
 
 ### 19.2 实现
 - 新增 autoload `MusicManager`（`autoload/music_manager.gd`），自己持有 `AudioStreamPlayer`
   - 用 autoload 而不是各场景自带的 `BgmPlayer`，好处是**跨场景不中断**：
     连续打两关普通关时曲子继续放，不会每关从头重播（同一首再调用直接 return）
-  - 三个入口：`play_hub()` / `play_stage()` / `play_boss()`，另有 `play(path)` / `stop()`
+  - 入口：`play_hub()` / `play_title()`（与大厅同曲）/ `play_stage()` / `play_boss()`，另有 `play(path)` / `stop()`
+  - **交叉淡出**：两个 `AudioStreamPlayer` 轮流用，切歌时新曲从 `SILENT_DB(-40)` 淡入到
+    `VOLUME_DB(-6)`、旧曲同时淡出并在淡完后再 `stop()`，时长 `FADE_TIME = 0.6s`；
+    上一次淡入淡出没完就再切会直接接管（kill 掉旧 tween）
   - 音量 `VOLUME_DB = -6.0`（比音效轻一点，避免盖住枪声）
   - `process_mode = ALWAYS`：结算弹窗把 `time_scale` 设 0 时音乐不停
   - mp3 导入设置没勾循环，所以运行时 `duplicate()` 后手动 `loop = true`；另有 `finished -> play()` 兜底
 - 场景里原有的 `BgmPlayer` 关掉 `autoplay`（battle.tscn / game.tscn / hub.tscn），避免双份播放
-- 调用点：`hub.gd`（大厅曲）、`battle.gd`（按目标类型分 BOSS / 普通）、`game.gd`（经典模式）、`title.gd`（标题界面）
+- 调用点：`hub.gd`（大厅曲）、`battle.gd`（按目标类型分 BOSS / 普通）、`game.gd`（经典模式）、`title.gd`（大厅曲）
 
 ### 19.3 自检
-- `tools/test_music.tscn`：23 项 —— 三个文件存在且能加载、互不相同、三个入口切到正确曲子、
-  **同一首重复调用不重播**（`play_count` 不变）、坏路径不切换不计数、`stop()` 清空
-- 游戏内路由实测：大厅 -> `Overworld`；第 6 层普通关 -> `The Outlaw`；第 5 层 BOSS -> `Final Boss & Ending`
+- `tools/test_music.tscn`：**31 项** —— 三个文件存在且能加载、互不相同、各入口切到正确曲子、
+  **同一首重复调用不重播**（`play_count` 不变，标题与大堂同曲也不重播）、坏路径不切换不计数、
+  `stop()` 清空，以及**交叉淡出**：切歌换到另一路播放器、新曲从静音开始、旧曲此刻更响（正在交叉）、
+  淡完后新曲到正常音量且旧曲已停
+- 游戏内路由实测：大厅 -> `Overworld`；第 6 层普通关 -> `The Outlaw`；第 5 层 BOSS -> `Final Boss & Ending`；标题 -> `Overworld`
