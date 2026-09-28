@@ -298,13 +298,16 @@ func _make_spacer(height: int) -> Control:
 
 
 func _on_start_button_pressed() -> void:
+	SfxPlayer.ui_click()
 	get_tree().change_scene_to_file(GAME_SCENE_PATH)
 
 
 func _on_quit_button_pressed() -> void:
+	SfxPlayer.ui_click()
 	get_tree().quit()
 
 func _on_start_run_button_pressed() -> void:
+	SfxPlayer.ui_click()
 	GameFlow.start_new_run()
 
 ## 调试：第 1 层普通关（随机场地）+ 固定一只队友，用来试队友 AI

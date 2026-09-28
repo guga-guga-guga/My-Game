@@ -224,6 +224,7 @@ func _activate_selected() -> void:
 		_message.text = "金币不够 还差 %d" % maxi(price - RunState.gold, 0)
 		return
 	_message.text = "已购买 %s" % String(ITEM_TITLES[key])
+	SfxPlayer.buy()
 	_refresh()
 
 

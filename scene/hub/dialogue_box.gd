@@ -219,6 +219,7 @@ func _activate(index: int) -> void:
 		return
 	var chosen := clampi(index, 0, _options.size() - 1)
 	_selected = chosen
+	SfxPlayer.ui_click()
 	option_selected.emit(chosen)      # 先发选项（Hub 此时还能读到 _active_npc）
 	_close()
 
