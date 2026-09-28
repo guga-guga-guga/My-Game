@@ -54,18 +54,20 @@ var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"
 
 func _ready() -> void:
 	MusicManager.play_hub()               # 大厅曲（Overworld）
-	# 调试开关先于一切生效：层数决定三个位置的角色类型，必须在 _spawn_npcs() 之前赋值
-	if debug_floor > 0:
-		RunState.floor_index = debug_floor
-		print("[Hub] 调试: 强制层数 = %d" % debug_floor)
-	if debug_start_gold > 0:
-		RunState.add_gold(debug_start_gold)
-		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
-	for _index in range(maxi(debug_start_health, 0)):
-		RunState.buy_max_health()
-	if debug_start_ally:
-		RunState.ally_pending = true
-		print("[Hub] 调试: 预支一个队友")
+	# 所有调试开关只在调试构建生效：发布版（导出的 exe）自动隐藏
+	if OS.is_debug_build():
+		# 调试开关先于一切生效：层数决定三个位置的角色类型，必须在 _spawn_npcs() 之前赋值
+		if debug_floor > 0:
+			RunState.floor_index = debug_floor
+			print("[Hub] 调试: 强制层数 = %d" % debug_floor)
+		if debug_start_gold > 0:
+			RunState.add_gold(debug_start_gold)
+			print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
+		for _index in range(maxi(debug_start_health, 0)):
+			RunState.buy_max_health()
+		if debug_start_ally:
+			RunState.ally_pending = true
+			print("[Hub] 调试: 预支一个队友")
 	if debug_start_health > 0:
 		print("[Hub] 调试: 预支生命 +%d -> 当前 %d/%d" % [
 			debug_start_health, RunState.current_health, RunState.max_health])
@@ -95,9 +97,8 @@ func _ready() -> void:
 	_setup_level_report()
 	_show_pending_level_report()
 	_setup_pause_menu()
-	if debug_dialogue_test:
+	if OS.is_debug_build() and debug_dialogue_test:
 		_start_debug_dialogue_test()
-	if debug_dialogue_test:
 		print("[Hub] 调试: 已开启自动对话测试")
 	print("[Hub] 第 %d 层中间地图 seed=%d 场地 %dx%d 角色=%s" % [
 		RunState.floor_index, use_seed, arena_data["width"], arena_data["height"], str(npcs.map(

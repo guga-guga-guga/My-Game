@@ -77,6 +77,13 @@ var _result_recorded := false
 
 
 func _ready() -> void:
+	# 发布版（导出的 exe）里把所有调试开关和调试打印都关掉
+	if not OS.is_debug_build():
+		debug_print = false
+		debug_goal_type = ""
+		debug_fast_boss = false
+		debug_instant_boss_win = false
+		debug_instant_win = false
 	random_generator.randomize()
 
 	# ① 目标必须先算:限时决定倒计时条长度 stage_duration 由 _setup_hud 读取 
