@@ -84,6 +84,7 @@ var round_kill_count: int = 0
 
 #初始化刷怪系统:缓存出生点，缓存配置，刷出初始敌人并启动定时器
 func _ready() -> void:
+	MusicManager.play_stage()             # 经典模式算"其余"
 	random_generator.randomize()
 	_configure_result_dialog()
 	_setup_hud()

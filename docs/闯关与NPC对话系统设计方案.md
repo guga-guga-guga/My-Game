@@ -660,3 +660,28 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 
 **自检**：`tools/test_hub_health.tscn` 6 项 —— 玩家身上生命 = 整局、HUD 文本正确、
 商店买 +1 立刻变、跨关卡残血（剩 2）正确显示。
+
+## 19. 背景音乐（用户指定曲目）
+
+### 19.1 曲目分配
+| 场景 | 曲子 |
+|---|---|
+| 大厅（Hub 中间地图） | `1-27 Journey of the Prairie King (Overworld).mp3` |
+| BOSS 战（第 5 / 10 层） | `1-29 Journey of the Prairie King (Final Boss & Ending).mp3` |
+| 其余（普通关 / 精英关 / 经典模式 / 标题界面） | `1-28 Journey of the Prairie King (The Outlaw).mp3` |
+
+### 19.2 实现
+- 新增 autoload `MusicManager`（`autoload/music_manager.gd`），自己持有 `AudioStreamPlayer`
+  - 用 autoload 而不是各场景自带的 `BgmPlayer`，好处是**跨场景不中断**：
+    连续打两关普通关时曲子继续放，不会每关从头重播（同一首再调用直接 return）
+  - 三个入口：`play_hub()` / `play_stage()` / `play_boss()`，另有 `play(path)` / `stop()`
+  - 音量 `VOLUME_DB = -6.0`（比音效轻一点，避免盖住枪声）
+  - `process_mode = ALWAYS`：结算弹窗把 `time_scale` 设 0 时音乐不停
+  - mp3 导入设置没勾循环，所以运行时 `duplicate()` 后手动 `loop = true`；另有 `finished -> play()` 兜底
+- 场景里原有的 `BgmPlayer` 关掉 `autoplay`（battle.tscn / game.tscn / hub.tscn），避免双份播放
+- 调用点：`hub.gd`（大厅曲）、`battle.gd`（按目标类型分 BOSS / 普通）、`game.gd`（经典模式）、`title.gd`（标题界面）
+
+### 19.3 自检
+- `tools/test_music.tscn`：23 项 —— 三个文件存在且能加载、互不相同、三个入口切到正确曲子、
+  **同一首重复调用不重播**（`play_count` 不变）、坏路径不切换不计数、`stop()` 清空
+- 游戏内路由实测：大厅 -> `Overworld`；第 6 层普通关 -> `The Outlaw`；第 5 层 BOSS -> `Final Boss & Ending`

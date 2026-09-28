@@ -49,6 +49,7 @@ var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"
 
 
 func _ready() -> void:
+	MusicManager.play_hub()               # 大厅曲（Overworld）
 	# 调试开关先于一切生效：层数决定三个位置的角色类型，必须在 _spawn_npcs() 之前赋值
 	if debug_floor > 0:
 		RunState.floor_index = debug_floor

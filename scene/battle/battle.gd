@@ -67,6 +67,10 @@ func _ready() -> void:
 
 	# ① 目标必须先算:限时决定倒计时条长度 stage_duration 由 _setup_hud 读取 
 	goal = LevelGoal.build(_context_floor(), _context_node_type(), debug_goal_type)
+	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+		MusicManager.play_boss()          # BOSS 战曲
+	else:
+		MusicManager.play_stage()         # 普通关/精英关曲
 	stage_duration = LevelGoal.stage_duration(goal)
 	_waves = goal.get("waves", [])
 
