@@ -12,6 +12,12 @@ const LevelGoal = preload("res://scene/battle/level_goal.gd")
 const BossScene = preload("res://scene/boss.tscn")
 const BossConfig = preload("res://resources/config/enemy_boss.tres")
 const AllyScene = preload("res://scene/ally.tscn")
+const AllyIcon := preload("res://resources/texture/icon.png")
+const ALLY_NAME := "队友A"
+const HUD_FONT_GOLD := 28
+const HUD_FONT_NAME := 22
+const HUD_FONT_SMALL := 20
+const HUD_ICON_SIZE := 48.0
 
 @export_group("场地")
 ## 场地尺寸 格 ，会被 ArenaGenerator 夹到 24x16 ~ 38x23
@@ -58,6 +64,11 @@ var _boss_defeated := false
 var _boss: Enemy = null
 var _boss_title_label: Label = null
 var _debug_win_started := false
+var _ally = null
+var _hud_gold: Label = null
+var _hud_ally_box: Control = null
+var _hud_ally_hp: Label = null
+var _hud_ally_state: Label = null
 var _last_result_won := false
 var _gold_gained := 0                 ## 本关赚到的金币（汇报用）
 var _result_recorded := false
@@ -78,6 +89,7 @@ func _ready() -> void:
 	_configure_result_dialog()
 	_setup_hud()
 	_setup_goal_hud()
+	_setup_battle_hud()
 	_apply_goal_hud_layout()
 
 	# ② 场地数据 到 ③ 铺瓦片 红门在 Overlay 层 到 ④ 出怪点与红门成对创建
@@ -161,6 +173,113 @@ func _on_run_state_health_changed(current: int, maximum: int) -> void:
 	player.current_health = clampi(current, 1, player.max_health)
 
 
+## 右上角：金币（用户要求战斗里也显示）+ 队友头像/名字/血量/状态
+func _setup_battle_hud() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "BattleHud"
+	layer.layer = 5
+	add_child(layer)
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	box.grow_vertical = Control.GROW_DIRECTION_END
+	box.offset_left = -280.0
+	box.offset_right = -16.0
+	box.offset_top = 16.0
+	box.offset_bottom = 16.0
+	box.add_theme_constant_override("separation", 6)
+	box.alignment = BoxContainer.ALIGNMENT_END
+	layer.add_child(box)
+
+	var panel := _make_hud_panel(Vector2(-16.0, 16.0))
+	box.add_child(panel)
+	var gold_box := VBoxContainer.new()
+	panel.add_child(gold_box)
+	_hud_gold = Label.new()
+	_hud_gold.add_theme_font_size_override("font_size", HUD_FONT_GOLD)
+	_hud_gold.add_theme_color_override("font_color", Color(1.0, 0.90, 0.60))
+	_hud_gold.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_hud_gold.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gold_box.add_child(_hud_gold)
+
+	# 队友面板：头像 + 名字 + 血量 + 状态
+	var ally_panel := _make_hud_panel(Vector2(-16.0, 16.0))
+	box.add_child(ally_panel)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	ally_panel.add_child(row)
+	var icon := TextureRect.new()
+	icon.texture = AllyIcon
+	icon.custom_minimum_size = Vector2(HUD_ICON_SIZE, HUD_ICON_SIZE)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	row.add_child(icon)
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 2)
+	row.add_child(info)
+	var name_label := Label.new()
+	name_label.text = ALLY_NAME
+	name_label.add_theme_font_size_override("font_size", HUD_FONT_NAME)
+	name_label.add_theme_color_override("font_color", Color(0.85, 0.93, 1.0))
+	info.add_child(name_label)
+	_hud_ally_hp = Label.new()
+	_hud_ally_hp.add_theme_font_size_override("font_size", HUD_FONT_SMALL)
+	_hud_ally_hp.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55))
+	info.add_child(_hud_ally_hp)
+	_hud_ally_state = Label.new()
+	_hud_ally_state.add_theme_font_size_override("font_size", HUD_FONT_SMALL)
+	_hud_ally_state.add_theme_color_override("font_color", Color(0.70, 0.85, 1.0))
+	info.add_child(_hud_ally_state)
+	_hud_ally_box = ally_panel
+
+	if not RunState.gold_changed.is_connected(_on_hud_gold_changed):
+		RunState.gold_changed.connect(_on_hud_gold_changed)
+	_refresh_hud_gold()
+	_hud_ally_box.visible = false
+
+
+func _make_hud_panel(_unused_offset: Vector2) -> PanelContainer:
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.28)      # 和 Hub 金币 HUD 一致的半透明底
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(10)
+	panel.add_theme_stylebox_override("panel", style)
+	return panel
+
+
+func _on_hud_gold_changed(_amount: int) -> void:
+	_refresh_hud_gold()
+
+
+func _refresh_hud_gold() -> void:
+	if _hud_gold != null:
+		_hud_gold.text = "金币 %d" % RunState.gold
+
+
+func _refresh_ally_hud() -> void:
+	if _hud_ally_box == null:
+		return
+	if _ally == null or not is_instance_valid(_ally):
+		_hud_ally_box.visible = false
+		return
+	_hud_ally_box.visible = true
+	if _ally.is_dead:
+		_hud_ally_hp.text = "0 / %d" % _ally.MAX_HEALTH
+		_hud_ally_state.text = "阵亡"
+		return
+	_hud_ally_hp.text = "%d / %d" % [_ally.current_health, _ally.MAX_HEALTH]
+	_hud_ally_state.text = String(_ally.state_name())
+
+
+func _on_ally_state_changed(_state: String) -> void:
+	_refresh_ally_hud()
+
+
+func _on_ally_health_changed(_current: int, _maximum: int) -> void:
+	_refresh_ally_hud()
+
+
 ## 商店里雇了队友的话，这一关开场把他放出来（只在本关有效）
 func _spawn_ally_if_hired() -> void:
 	if not RunState.ally_pending:
@@ -173,9 +292,15 @@ func _spawn_ally_if_hired() -> void:
 	var body := player.get_node_or_null("BodySprite") as AnimatedSprite2D
 	ally.setup(player, body.sprite_frames if body != null else null,
 		RunState.get_player_damage(), RunState.get_player_fire_interval(), $EnemyContainer)
+	_ally = ally
+	ally.health_changed.connect(_on_ally_health_changed)
+	ally.state_changed.connect(_on_ally_state_changed)
+	_refresh_ally_hud()
 	if debug_print:
-		print("[Battle] 队友已出场: 伤害 %d 开火间隔 %.3f（玩家 %.3f 的七折射速）" % [
-			ally.damage, ally.fire_interval, RunState.get_player_fire_interval()])
+		print("[Battle] 队友已出场: 伤害 %d 开火间隔 %.3f（玩家 %.3f 的七折射速）状态=%s" % [
+			ally.damage, ally.fire_interval, RunState.get_player_fire_interval(), ally.state_name()])
+		print("[Battle自检] 右上角 HUD: %s / 队友 %s %s %s" % [
+			_hud_gold.text, ALLY_NAME, _hud_ally_hp.text, _hud_ally_state.text])
 
 
 func _context_floor() -> int:

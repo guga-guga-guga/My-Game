@@ -13,6 +13,7 @@ const BLINK_ENABLED_SHADER_PARAMETER := &"blink_enabled"
 var is_expiring: bool = false
 
 func _ready() -> void:
+	add_to_group("pickup")          # 队友靠这个组找道具
 	body_entered.connect(_on_body_entered)
 	lifetime_timer.timeout.connect(_on_lifetime_timer_timeout)
 	lifetime_timer.one_shot = true
@@ -50,10 +51,10 @@ func _apply_config_to_visual() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if config == null:
 		return
-	var player := body as Player
-	if player == null:
+	# 玩家和队友都能吃：谁有 apply_pickup 就归谁（队友吃到的加成只作用于队友自己）
+	if body == null or not body.has_method("apply_pickup"):
 		return
-	if player.apply_pickup(config):
+	if body.call("apply_pickup", config):
 		queue_free()
 	
 #道具寿命结束后自刎归天
