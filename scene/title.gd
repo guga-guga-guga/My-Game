@@ -42,6 +42,7 @@ const SHOW_TITLE_TEXT := true
 
 
 func _ready() -> void:
+	print("[Title] 调试构建=%s（发布版应为 false，调试入口会自动隐藏）" % str(OS.is_debug_build()))
 	MusicManager.play_title()             # 标题界面用大厅那首（用户要求）
 	#关键:game.gd 在结算时把时间缩放设为 0 并暂停了整棵场景树，
 	#切回标题必须复位，否则整个界面会卡死，按钮也点不动
@@ -97,9 +98,11 @@ func _build_ui() -> void:
 	start_button.pressed.connect(_on_start_button_pressed)
 	_button_bar.add_child(start_button)
 
-	var ally_debug_button := _make_button("调试: 队友关卡", "DebugAllyButton")
-	ally_debug_button.pressed.connect(_on_debug_ally_pressed)
-	_button_bar.add_child(ally_debug_button)
+	# 调试入口只在调试构建里出现（发布版看不到）
+	if OS.is_debug_build():
+		var ally_debug_button := _make_button("调试: 队友关卡", "DebugAllyButton")
+		ally_debug_button.pressed.connect(_on_debug_ally_pressed)
+		_button_bar.add_child(ally_debug_button)
 
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
