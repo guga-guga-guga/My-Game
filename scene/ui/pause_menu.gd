@@ -111,6 +111,7 @@ func _close(quit_to_title: bool) -> void:
 
 
 func _confirm() -> void:
+	SfxPlayer.ui_click()
 	_close(_selected == 1)
 
 

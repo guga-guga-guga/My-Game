@@ -55,6 +55,7 @@ func _on_body_entered(body: Node2D) -> void:
 	if body == null or not body.has_method("apply_pickup"):
 		return
 	if body.call("apply_pickup", config):
+		SfxPlayer.pickup()
 		queue_free()
 	
 #道具寿命结束后自刎归天

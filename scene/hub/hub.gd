@@ -356,6 +356,7 @@ func _open_npc_dialogue(npc: Node) -> void:
 		body = "最终决战 准备好了吗？"
 	_dialogue.show_dialogue(npc.title, [body], ["进入", "取消"])
 	_sync_player_lock()                         # 开完再锁，_is_ui_open() 这时才是 true
+	SfxPlayer.interact()
 	print("[Hub] 对话打开: %s" % npc.title)
 
 
@@ -410,6 +411,7 @@ func _open_shop() -> void:
 	if _shop == null:
 		return
 	_shop.open()
+	SfxPlayer.interact()
 	print("[Hub] 打开商店 金币=%d" % RunState.gold)
 
 
