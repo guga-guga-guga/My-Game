@@ -97,9 +97,9 @@ func _build_ui() -> void:
 	start_button.pressed.connect(_on_start_button_pressed)
 	_button_bar.add_child(start_button)
 
-	var boss_button := _make_button("调试: 直接打 Boss", "DebugBossButton")
-	boss_button.pressed.connect(_on_debug_boss_pressed)
-	_button_bar.add_child(boss_button)
+	var ally_debug_button := _make_button("调试: 队友关卡", "DebugAllyButton")
+	ally_debug_button.pressed.connect(_on_debug_ally_pressed)
+	_button_bar.add_child(ally_debug_button)
 
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
@@ -302,8 +302,16 @@ func _on_quit_button_pressed() -> void:
 func _on_start_run_button_pressed() -> void:
 	GameFlow.start_new_run()
 
-func _on_debug_boss_pressed() -> void:
-	# 调试用：跳过路线图，直接从最终层（Boss 关）开始
+## 调试：第 1 层普通关（随机场地）+ 固定一只队友，用来试队友 AI
+## 只做准备、不切场景（自检要能单独调它，不然会把测试自己的场景顶掉）
+func _prepare_ally_debug_level() -> Dictionary:
 	RunState.reset()
-	RunState.floor_index = RunState.MAX_FLOOR
-	GameFlow.start_battle({"floor": RunState.floor_index, "node_type": "boss"})
+	RunState.floor_index = 1
+	RunState.ally_pending = true
+	return {"floor": 1, "node_type": "battle"}
+
+
+func _on_debug_ally_pressed() -> void:
+	var context := _prepare_ally_debug_level()
+	print("[Title] 调试: 进队友关卡（第 1 层普通关 + 1 只队友）")
+	GameFlow.start_battle(context)

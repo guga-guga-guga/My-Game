@@ -8,6 +8,7 @@ const NpcScript = preload("res://scene/hub/npc.gd")
 const DialogueBoxScript = preload("res://scene/hub/dialogue_box.gd")
 const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
 const LevelReportScript = preload("res://scene/hub/level_report.gd")
+const PauseMenuScript = preload("res://scene/ui/pause_menu.gd")
 
 @export_group("场地")
 @export var arena_width: int = 12
@@ -45,6 +46,7 @@ var _player: Player = null
 var _dialogue = null
 var _shop = null
 var _report = null
+var _pause_menu = null
 var _gold_hud: Label = null
 var _active_npc = null
 var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"，加冷却避免立刻重开
@@ -92,6 +94,7 @@ func _ready() -> void:
 	_setup_gold_hud()
 	_setup_level_report()
 	_show_pending_level_report()
+	_setup_pause_menu()
 	if debug_dialogue_test:
 		_start_debug_dialogue_test()
 	if debug_dialogue_test:
@@ -315,7 +318,13 @@ func _setup_dialogue() -> void:
 func _physics_process(delta: float) -> void:
 	if _interact_lock > 0.0:
 		_interact_lock -= delta
+	if _pause_menu != null and _pause_menu.is_open():
+		return
 	if _is_ui_open():
+		return
+	# ESC：没有别的界面打开时才叫出暂停菜单（商店/对话/汇报的 ESC 优先关它们自己）
+	if Input.is_action_just_pressed("pause"):
+		_pause_menu.open()
 		return
 	if _interact_lock <= 0.0 and Input.is_action_just_pressed("interact"):
 		var npc = _nearest_npc_in_range()
@@ -375,6 +384,19 @@ func _show_pending_level_report() -> void:
 func _on_report_closed() -> void:
 	_sync_player_lock()
 	_interact_lock = 0.25
+
+
+## ESC 暂停菜单（Hub 里也能叫出来）
+func _setup_pause_menu() -> void:
+	_pause_menu = PauseMenuScript.new()
+	add_child(_pause_menu)
+	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
+
+
+func _on_quit_to_title_requested() -> void:
+	# 用户选"回到主界面"：直接放弃这一局，不写战绩
+	print("[Hub] 回到主界面（放弃本局，不留战绩）")
+	GameFlow.goto_title()
 
 
 func _on_shop_closed() -> void:
