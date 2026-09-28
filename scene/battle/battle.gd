@@ -11,6 +11,7 @@ const ArenaGen = preload("res://scene/arena/arena_generator.gd")
 const LevelGoal = preload("res://scene/battle/level_goal.gd")
 const BossScene = preload("res://scene/boss.tscn")
 const BossConfig = preload("res://resources/config/enemy_boss.tres")
+const AllyScene = preload("res://scene/ally.tscn")
 
 @export_group("场地")
 ## 场地尺寸 格 ，会被 ArenaGenerator 夹到 24x16 ~ 38x23
@@ -93,6 +94,7 @@ func _ready() -> void:
 	_setup_enemy_pathfinder()
 	_collect_enemy_spawn_points()
 	_warn_spawn_points_inside_walls()
+	_spawn_ally_if_hired()
 	_collect_enemy_configs()
 	_apply_floor_scaling_to_enemy_configs()
 	_configure_enemy_spawn_timer()
@@ -157,6 +159,23 @@ func _on_run_state_health_changed(current: int, maximum: int) -> void:
 		return
 	player.max_health = maxi(maximum, 1)
 	player.current_health = clampi(current, 1, player.max_health)
+
+
+## 商店里雇了队友的话，这一关开场把他放出来（只在本关有效）
+func _spawn_ally_if_hired() -> void:
+	if not RunState.ally_pending:
+		return
+	RunState.ally_pending = false          # 用完即清：下一关要重新雇
+	var ally = AllyScene.instantiate()          # 不用类型注解：队友脚本没有全局类名
+	if ally == null:
+		return
+	add_child(ally)
+	var body := player.get_node_or_null("BodySprite") as AnimatedSprite2D
+	ally.setup(player, body.sprite_frames if body != null else null,
+		RunState.get_player_damage(), RunState.get_player_fire_interval(), $EnemyContainer)
+	if debug_print:
+		print("[Battle] 队友已出场: 伤害 %d 开火间隔 %.3f（玩家 %.3f 的七折射速）" % [
+			ally.damage, ally.fire_interval, RunState.get_player_fire_interval()])
 
 
 func _context_floor() -> int:
@@ -283,6 +302,8 @@ func _apply_run_state_to_player() -> void:
 ## 金币只来自敌人掉落
 func _on_enemy_died() -> void:
 	super._on_enemy_died()
+	if debug_print:
+		print("[Battle] 击杀 %d 只（本关累计）金币 %d" % [round_kill_count, RunState.gold])
 	var gain := maxi(gold_per_enemy_kill, 0)
 	RunState.add_gold(gain)
 	_gold_gained += gain

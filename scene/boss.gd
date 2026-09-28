@@ -101,6 +101,7 @@ var charge_count := 0
 
 func _ready() -> void:
 	super._ready()
+	chase_ally = false        # Boss 只盯玩家，不会被队友引走
 	_setup_glow()
 	animated_sprite.scale = Vector2(sprite_scale, sprite_scale)
 	_setup_outline()

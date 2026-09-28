@@ -13,10 +13,11 @@ const PANEL_MARGIN_Y := 60.0
 const PRICE_WIDTH := 220.0
 
 ## 可选商品的平面顺序（和 RunState.SHOP_SHELVES 一致：道具 -> 加成）
-const ITEM_KEYS: Array[String] = ["health", "heal", "fire_rate", "damage"]
+const ITEM_KEYS: Array[String] = ["health", "heal", "ally", "fire_rate", "damage"]
 const ITEM_TITLES := {
 	"health": "生命上限 +1",
 	"heal": "恢复血量",
+	"ally": "雇佣队友",
 	"fire_rate": "射速 +10%",
 	"damage": "子弹伤害 +1",
 }
@@ -176,6 +177,8 @@ func _refresh() -> void:
 		var affordable := RunState.gold >= price
 		if key == "heal":
 			affordable = affordable and RunState.current_health < RunState.max_health
+		elif key == "ally":
+			affordable = affordable and not RunState.ally_pending
 		var chosen := index == _selected
 		var name_color := Color(0.88, 0.89, 0.92)
 		var price_color := Color(1.0, 0.90, 0.60)
@@ -188,7 +191,9 @@ func _refresh() -> void:
 		_row_names[index].text = ("> " if chosen else "  ") + String(ITEM_TITLES[key])
 		_row_names[index].add_theme_color_override("font_color", name_color)
 		# 恢复血量：血满时显示"血量已满"，省得玩家以为能买
-		if key == "heal" and RunState.current_health >= RunState.max_health:
+		if key == "ally" and RunState.ally_pending:
+			_row_prices[index].text = "已雇佣"
+		elif key == "heal" and RunState.current_health >= RunState.max_health:
 			_row_prices[index].text = "血量已满"
 		else:
 			_row_prices[index].text = "%d 金" % price
@@ -211,6 +216,9 @@ func _activate_selected() -> void:
 	var price := RunState.shop_price(key)
 	if key == "heal" and RunState.current_health >= RunState.max_health:
 		_message.text = "血量已满 不用买"
+		return
+	if key == "ally" and RunState.ally_pending:
+		_message.text = "本关已经雇过队友了"
 		return
 	if not RunState.shop_buy(key):
 		_message.text = "金币不够 还差 %d" % maxi(price - RunState.gold, 0)

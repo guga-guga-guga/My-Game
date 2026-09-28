@@ -74,6 +74,7 @@ func reset() -> void:
 	route.clear()
 	shop_buy_count.clear()
 	last_level_report.clear()
+	ally_pending = false
 	_record_written = false
 	run_started.emit()
 	floor_changed.emit(floor_index)
@@ -194,10 +195,11 @@ const SHOP_PRICE_HEALTH := 15        ## 生命上限 +1 的初始价
 const SHOP_PRICE_FIRE_RATE := 25     ## 射速 +10% 的初始价
 const SHOP_PRICE_DAMAGE := 40        ## 子弹伤害 +1 的初始价
 const SHOP_PRICE_HEAL := 30          ## 恢复血量：**固定价**，不随购买次数上涨
+const SHOP_PRICE_ALLY := 60          ## 雇佣队友：**固定价**，只在本关生效
 
 ## 商店货架（按用户要求的分类与顺序）：道具 / 加成
 const SHOP_SHELVES: Array = [
-	{"title": "道具", "keys": ["health", "heal"]},
+	{"title": "道具", "keys": ["health", "heal", "ally"]},
 	{"title": "加成", "keys": ["fire_rate", "damage"]},
 ]
 const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
@@ -205,11 +207,16 @@ const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
 ## 本局各商品已买次数 key -> int 
 var shop_buy_count: Dictionary = {}
 
+## 是否已经雇了队友（进关卡时消耗掉，只在本关生效）
+var ally_pending: bool = false
+
 
 ## 当前价格 = 初始价 + 初始价的一半 * 已买次数
 func shop_price(key: String) -> int:
 	if key == "heal":
 		return SHOP_PRICE_HEAL          # 固定 30 金
+	if key == "ally":
+		return SHOP_PRICE_ALLY          # 固定 60 金
 	var base := 0
 	match key:
 		"health":
@@ -226,6 +233,14 @@ func shop_price(key: String) -> int:
 
 ## 买一件：钱不够返回 false（不扣钱也不加属性）
 func shop_buy(key: String) -> bool:
+	if key == "ally":
+		# 雇佣队友：每关最多 1 个（已经雇过就等这关打完）
+		if ally_pending:
+			return false
+		if not try_spend_gold(SHOP_PRICE_ALLY):
+			return false
+		ally_pending = true
+		return true
 	if key == "heal":
 		# 恢复血量：血满不让买（省得白花钱），买了直接回满
 		if current_health >= max_health:
