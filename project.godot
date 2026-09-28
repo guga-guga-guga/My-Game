@@ -16,18 +16,19 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
 [autoload]
+MusicManager="*res://autoload/music_manager.gd"
 
 RunState="*res://autoload/run_state.gd"
 GameFlow="*res://autoload/game_flow.gd"
 DialogueManager="*res://autoload/dialogue_manager.gd"
 
-[gui]
-
-theme/custom_font="res://resources/font/IPix.ttf"
-
 [display]
 
 window/stretch/mode="canvas_items"
+
+[gui]
+
+theme/custom_font="res://resources/font/IPix.ttf"
 
 [input]
 

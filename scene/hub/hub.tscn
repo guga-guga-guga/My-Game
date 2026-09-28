@@ -164,7 +164,7 @@ position_smoothing_speed = 8.0
 
 [node name="BgmPlayer" type="AudioStreamPlayer" parent="AudioContainer" unique_id=1770544515]
 stream = ExtResource("7_17rxn")
-autoplay = true
+autoplay = false
 
 [node name="ResultWinSfxPlayer" type="AudioStreamPlayer" parent="AudioContainer" unique_id=341437419]
 process_mode = 2

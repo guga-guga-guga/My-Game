@@ -42,6 +42,7 @@ const SHOW_TITLE_TEXT := true
 
 
 func _ready() -> void:
+	MusicManager.play_stage()             # 标题界面也算"其余"
 	#关键:game.gd 在结算时把时间缩放设为 0 并暂停了整棵场景树，
 	#切回标题必须复位，否则整个界面会卡死，按钮也点不动
 	Engine.time_scale = 1.0
