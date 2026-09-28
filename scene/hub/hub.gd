@@ -22,6 +22,8 @@ const LevelReportScript = preload("res://scene/hub/level_report.gd")
 @export var debug_start_gold: int = 0
 ## 调试：进入 Hub 时预支多少生命上限（测生命 HUD 用；0 = 不预支）
 @export var debug_start_health: int = 0
+## 调试：进入 Hub 时直接雇一个队友（测队友用）
+@export var debug_start_ally: bool = false
 ## 调试：进入 Hub 时强制层数（测最终层的 BOSS 位置用；0 = 用真实层数）
 @export var debug_floor: int = 0
 
@@ -59,6 +61,9 @@ func _ready() -> void:
 		print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
 	for _index in range(maxi(debug_start_health, 0)):
 		RunState.buy_max_health()
+	if debug_start_ally:
+		RunState.ally_pending = true
+		print("[Hub] 调试: 预支一个队友")
 	if debug_start_health > 0:
 		print("[Hub] 调试: 预支生命 +%d -> 当前 %d/%d" % [
 			debug_start_health, RunState.current_health, RunState.max_health])

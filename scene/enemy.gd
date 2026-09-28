@@ -33,6 +33,8 @@ enum DeathSequenceStage {
 @export var touch_damage: int = 1
 # 敌人持续贴住玩家时的伤害间隔
 @export var touch_damage_interval: float = 0.5
+## 是否会把"更近的队友"也当成追击目标（Boss 关掉，只盯玩家）
+@export var chase_ally: bool = true
 #受击闪烁持续时间
 @export var hurt_blink_duration: float = 0.16
 
@@ -52,6 +54,7 @@ enum DeathSequenceStage {
 
 #当前追踪的玩家对象，由敌人管理器在生成时注入
 var target_player: Player = null
+var _chase_target: Node2D = null
 #当前跟随的路径 世界坐标 ；为空时表示直接朝玩家直线追踪
 var current_path: PackedVector2Array = PackedVector2Array()
 #距离下次重算路径还剩多少秒
@@ -69,7 +72,7 @@ var is_dead: bool = false
 # 接触伤害冷却时间
 var touch_damage_cooldown_left: float = 0.0
 #当前仍在接触范围中的玩家对象
-var touched_player: Player = null
+var touched_actor: Node2D = null
 #受击闪烁剩余时间
 var hurt_blink_time_left: float = 0.0
 # 当前死亡流程所处的阶段
@@ -118,6 +121,23 @@ func apply_damage(amount: int) -> bool:
 	
 	return true
 
+## 当前该追谁：玩家，或者离得更近的队友（chase_ally=false 时只追玩家）
+func _pick_chase_target() -> Node2D:
+	var best: Node2D = null
+	if is_instance_valid(target_player) and not target_player.is_dead:
+		best = target_player
+	if not chase_ally:
+		return best
+	var ally := get_tree().get_first_node_in_group("ally") as Node2D
+	if ally == null or ally.get("is_dead"):
+		return best
+	if best == null:
+		return ally
+	if global_position.distance_to(ally.global_position) < global_position.distance_to(best.global_position):
+		return ally
+	return best
+
+
 #每帧处理移动，接触伤害和受击闪烁
 func _physics_process(delta: float) -> void:
 	_update_hurt_blink(delta)
@@ -130,7 +150,8 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector2.ZERO
 		return
 		
-	if not is_instance_valid(target_player) or target_player.is_dead:
+	_chase_target = _pick_chase_target()
+	if _chase_target == null:
 		velocity = Vector2.ZERO
 		move_and_slide()
 		return
@@ -235,14 +256,16 @@ func _update_path(delta: float) -> void:
 		return
 	
 	path_recompute_time_left = maxf(path_recompute_time_left - delta, 0.0)
-	var goal_cell := pathfinder.world_to_cell(target_player.global_position)
+	if _chase_target == null:
+		return
+	var goal_cell := pathfinder.world_to_cell(_chase_target.global_position)
 	if path_recompute_time_left > 0.0 and goal_cell == last_goal_cell:
 		return
 	
 	path_recompute_time_left = PATH_RECOMPUTE_INTERVAL
 	last_goal_cell = goal_cell
 	
-	var goal_position := target_player.global_position
+	var goal_position := _chase_target.global_position
 	#玩家没有墙体遮挡时直接走直线，连 A* 都不用跑，保持原有的追踪手感
 	var can_see_player := pathfinder.has_line_of_sight(global_position, goal_position)
 	if can_see_player:
@@ -297,18 +320,16 @@ func _get_move_direction() -> Vector2:
 func _on_touch_damage_area_body_entered(body: Node2D)-> void:
 	if is_dead:
 		return
-		
-	var player := body as Player
-	if player == null:
+	# 玩家和队友都会被打：只要对方有 apply_damage
+	if body == null or not body.has_method("apply_damage"):
 		return
-		
-	touched_player = player
+	touched_actor = body
 	_try_deal_touch_damage()
 	
 # 玩家离开接触区域后，停止持续伤寓
 func _on_touch_damage_area_body_exited(body: Node2D) -> void:
-	if body == touched_player:
-		touched_player = null
+	if body == touched_actor:
+		touched_actor = null
 
 #子弹进入接触区时，对敌人造成伤害固定伤害并销毁子弹
 func  _on_touch_damage_area_area_entered(area: Area2D) -> void:
@@ -331,10 +352,10 @@ func _update_touch_damage(delta: float) -> void:
 	if touch_damage_cooldown_left > 0.0:
 		touch_damage_cooldown_left = maxf(touch_damage_cooldown_left - delta, 0.0)
 	
-	if touched_player == null:
+	if touched_actor == null:
 		return
-	if not is_instance_valid(touched_player):
-		touched_player = null
+	if not is_instance_valid(touched_actor):
+		touched_actor = null
 		return
 	if touch_damage_cooldown_left > 0.0:
 		return
@@ -343,9 +364,9 @@ func _update_touch_damage(delta: float) -> void:
 
 #只在当前确实接触到玩家时结算接触伤害
 func _try_deal_touch_damage() -> void:
-	if touched_player == null:
+	if touched_actor == null:
 		return
-	touched_player.apply_damage(touch_damage)
+	touched_actor.apply_damage(touch_damage)
 	touch_damage_cooldown_left = touch_damage_interval
 		
 #通过 ShaderMaterial 参数控制敌人短暂闪烁
@@ -379,7 +400,7 @@ func _die() -> void:
 	died.emit()
 	velocity = Vector2.ZERO
 	current_path = PackedVector2Array()
-	touched_player = null
+	touched_actor = null
 	hurt_blink_time_left = 0.0
 	_set_hurt_blink_enabled(false)
 	collision_shape.set_deferred("disabled", true)
@@ -485,6 +506,11 @@ func _try_apply_explosion_damage() -> void:
 		var hit_player := collider as Player
 		if hit_player != null:
 			hit_player.apply_damage(config.explosion_damage)
+			continue
+
+		# 队友（用 group 判断，不引用具体类型：直接跑游戏时全局类缓存可能是空的）
+		if collider.is_in_group("ally") and collider.has_method("apply_damage"):
+			collider.call("apply_damage", config.explosion_damage)
 			continue
 
 		var hit_enemy := collider as Enemy
