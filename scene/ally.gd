@@ -14,6 +14,11 @@ extends CharacterBody2D
 
 const BULLET_SCENE := preload("res://scene/bullet.tscn")
 
+## 队友用自己的移动方向切动画（和玩家那套一模一样的四向动画，只是各播各的）
+## 玩家动画名: normal_down / normal_left / normal_right / normal_up（armed_* 是螺旋弹形态，队友用不了）
+const ANIMATION_PREFIX := &"normal"
+const WALK_ANIMATION_THRESHOLD := 8.0
+
 const STATE_ATTACK := "attack"
 const STATE_GUARD := "guard"
 
@@ -31,6 +36,8 @@ const GUARD_FIRE_RANGE := 130.0
 
 ## 自主攻击状态
 const ATTACK_FIRE_RANGE := 210.0
+## 自主攻击时的"搜索半径"：比开火距离大得多，会主动上门找敌人（看不到也敢去，靠寻路绕墙）
+const ATTACK_SEEK_RANGE := 420.0
 const KEEP_DISTANCE := 78.0
 const APPROACH_DISTANCE := 150.0
 
@@ -52,6 +59,8 @@ var damage := 1
 var fire_interval := 0.18
 
 var _player: Node2D = null
+var _player_sprite: AnimatedSprite2D = null
+var _facing_suffix := &"down"          ## 没在动时保持最后一次朝向
 var _enemy_container: Node = null
 var _pathfinder = null
 var _path := PackedVector2Array()
@@ -69,18 +78,19 @@ var _blink_tween: Tween = null
 @onready var _sprite: AnimatedSprite2D = $BodySprite
 
 
-func setup(player_node: Node2D, frames: SpriteFrames, player_damage: int,
+## player_sprite: 玩家的 AnimatedSprite2D（BodySprite）。队友共用它的 SpriteFrames，
+## 并每帧镜像"动画名 + 当前帧 + 缩放"，所以 idle/walk/形态变化都和本体一致。
+func setup(player_node: Node2D, player_sprite: AnimatedSprite2D, player_damage: int,
 		player_fire_interval: float, enemy_container: Node) -> void:
 	_player = player_node
+	_player_sprite = player_sprite
 	_enemy_container = enemy_container
 	damage = maxi(player_damage, 1)
 	fire_interval = maxf(player_fire_interval / FIRE_RATE_MULTIPLIER, 0.05)
-	if frames != null:
-		_sprite.sprite_frames = frames
-		var names := frames.get_animation_names()
-		if names.size() > 0:
-			_sprite.animation = names[0]
-		_sprite.play()
+	if player_sprite != null:
+		_sprite.sprite_frames = player_sprite.sprite_frames
+		_sprite.scale = player_sprite.scale
+	_update_animation(Vector2.ZERO)
 	if player_node != null:
 		global_position = player_node.global_position + Vector2(22.0, 0.0)
 
@@ -134,6 +144,32 @@ func _physics_process(delta: float) -> void:
 	_try_fire()
 
 
+## 按自己的移动方向切动画（方向取自本帧实际要走的方向；站着就保持上次朝向）
+func _update_animation(move_direction: Vector2) -> void:
+	if _sprite == null or _sprite.sprite_frames == null:
+		return
+	if move_direction.length() >= WALK_ANIMATION_THRESHOLD or move_direction != Vector2.ZERO:
+		_facing_suffix = _direction_suffix(move_direction)
+	var wanted := StringName("%s_%s" % [ANIMATION_PREFIX, _facing_suffix])
+	if not _sprite.sprite_frames.has_animation(wanted):
+		var names := _sprite.sprite_frames.get_animation_names()
+		if names.is_empty():
+			return
+		wanted = names[0]
+	if _sprite.animation != wanted:
+		_sprite.animation = wanted
+		_sprite.play()
+
+
+## 方向 -> 动画名后缀（和玩家一样按主轴取，四个方向各一套）
+func _direction_suffix(direction: Vector2) -> StringName:
+	if direction == Vector2.ZERO:
+		return _facing_suffix
+	if absf(direction.x) >= absf(direction.y):
+		return &"right" if direction.x >= 0.0 else &"left"
+	return &"down" if direction.y > 0.0 else &"up"
+
+
 ## 当前该往哪走
 func _pick_goal(delta: float) -> Vector2:
 	if state == STATE_GUARD:
@@ -142,9 +178,13 @@ func _pick_goal(delta: float) -> Vector2:
 	var pickup := _nearest_usable_pickup()
 	if pickup != null:
 		return pickup.global_position
-	var enemy := _nearest_visible_enemy(ATTACK_FIRE_RANGE)
+	# 找敌人：先看有没有"看得见"的，没有再找最近的（哪怕隔着墙，靠寻路过去）
+	var enemy := _nearest_visible_enemy(ATTACK_SEEK_RANGE)
 	if enemy == null:
-		return _guard_goal(delta)
+		enemy = _nearest_enemy(ATTACK_SEEK_RANGE, false)
+	if enemy == null:
+		# 场上没有敌人可打：原地待命，**不回玩家身边**（只有切到保护模式才回去）
+		return global_position
 	var distance := global_position.distance_to(enemy.global_position)
 	var to_enemy := global_position.direction_to(enemy.global_position)
 	if distance > APPROACH_DISTANCE:
@@ -177,7 +217,7 @@ func _move_towards(goal: Vector2, delta: float) -> void:
 	direction = direction.normalized()
 	velocity = direction * (MOVE_SPEED * _speed_buff_mult)
 	move_and_slide()
-	_sprite.flip_h = direction.x < 0.0
+	_update_animation(direction)
 
 
 func _path_direction(goal: Vector2, delta: float) -> Vector2:
@@ -222,7 +262,7 @@ func _try_fire() -> void:
 	if _fire_cooldown > 0.0:
 		return
 	var range_limit := GUARD_FIRE_RANGE if state == STATE_GUARD else ATTACK_FIRE_RANGE
-	var target := _nearest_visible_enemy(range_limit)
+	var target := _nearest_enemy(range_limit, true)
 	if target == null:
 		return
 	var direction := global_position.direction_to(target.global_position)
@@ -232,7 +272,8 @@ func _try_fire() -> void:
 	_fire(direction)
 
 
-func _nearest_visible_enemy(max_range: float) -> Node2D:
+## 找敌人。require_los=true 时只要"看得见"的（开火用），false 时连隔着墙的也算（自主攻击上门用）
+func _nearest_enemy(max_range: float, require_los: bool) -> Node2D:
 	if _enemy_container == null or not is_instance_valid(_enemy_container):
 		return null
 	var best: Node2D = null
@@ -246,11 +287,16 @@ func _nearest_visible_enemy(max_range: float) -> Node2D:
 		var distance := global_position.distance_to(enemy.global_position)
 		if distance >= best_distance:
 			continue
-		if not _has_line_of_sight(enemy.global_position):
+		if require_los and not _has_line_of_sight(enemy.global_position):
 			continue
 		best_distance = distance
 		best = enemy
 	return best
+
+
+## 只看"看得见"的敌人（开火判定 / 自检用）
+func _nearest_visible_enemy(max_range: float) -> Node2D:
+	return _nearest_enemy(max_range, true)
 
 
 ## 只捡"队友能用"的道具：玩家的形态/弹幕类道具它用不了，留给玩家
@@ -306,7 +352,6 @@ func _fire(direction: Vector2) -> void:
 		return
 	spawn_parent.add_child(bullet)
 	bullet.global_position = global_position + direction * BULLET_SPAWN_DISTANCE
-	_sprite.flip_h = direction.x < 0.0
 
 
 ## 队友吃道具：只加在它自己身上（用户选择）
@@ -377,6 +422,10 @@ func _play_hit_feedback() -> void:
 
 
 # ---------------- 供 headless 自检调用 ----------------
+
+func debug_update_animation(direction: Vector2) -> void:
+	_update_animation(direction)
+
 
 func debug_goal() -> Vector2:
 	return _goal

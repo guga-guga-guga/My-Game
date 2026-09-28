@@ -13,6 +13,7 @@ const BossScene = preload("res://scene/boss.tscn")
 const BossConfig = preload("res://resources/config/enemy_boss.tres")
 const AllyScene = preload("res://scene/ally.tscn")
 const AllyIcon := preload("res://resources/texture/icon.png")
+const PauseMenuScript = preload("res://scene/ui/pause_menu.gd")
 const ALLY_NAME := "队友A"
 const HUD_FONT_GOLD := 28
 const HUD_FONT_NAME := 22
@@ -65,6 +66,7 @@ var _boss: Enemy = null
 var _boss_title_label: Label = null
 var _debug_win_started := false
 var _ally = null
+var _pause_menu = null
 var _hud_gold: Label = null
 var _hud_ally_box: Control = null
 var _hud_ally_hp: Label = null
@@ -90,6 +92,7 @@ func _ready() -> void:
 	_setup_hud()
 	_setup_goal_hud()
 	_setup_battle_hud()
+	_setup_pause_menu()
 	_apply_goal_hud_layout()
 
 	# ② 场地数据 到 ③ 铺瓦片 红门在 Overlay 层 到 ④ 出怪点与红门成对创建
@@ -290,17 +293,71 @@ func _spawn_ally_if_hired() -> void:
 		return
 	add_child(ally)
 	var body := player.get_node_or_null("BodySprite") as AnimatedSprite2D
-	ally.setup(player, body.sprite_frames if body != null else null,
-		RunState.get_player_damage(), RunState.get_player_fire_interval(), $EnemyContainer)
+	# 把玩家的 AnimatedSprite2D 交给队友：共用同一套 SpriteFrames 并镜像动画
+	ally.setup(player, body, RunState.get_player_damage(), RunState.get_player_fire_interval(),
+		$EnemyContainer)
 	_ally = ally
 	ally.health_changed.connect(_on_ally_health_changed)
 	ally.state_changed.connect(_on_ally_state_changed)
 	_refresh_ally_hud()
+	ally.global_position = _ally_spawn_position()      # 别生成到墙里（原来固定放玩家右侧 22px）
 	if debug_print:
+		var spawn_cell := Vector2i(int(ally.global_position.x / float(ArenaGen.TILE_SIZE)),
+			int(ally.global_position.y / float(ArenaGen.TILE_SIZE)))
+		var spawn_is_floor := false
+		var grid_now: Array = arena_data.get("grid", [])
+		var width_now: int = int(arena_data.get("width", 0))
+		if not grid_now.is_empty() and width_now > 0:
+			spawn_is_floor = int(grid_now[spawn_cell.y * width_now + spawn_cell.x]) == 0
+		print("[Battle] 队友出生位置=%s 格=%s 该格是地板=%s" % [
+			str(ally.global_position), str(spawn_cell), str(spawn_is_floor)])
 		print("[Battle] 队友已出场: 伤害 %d 开火间隔 %.3f（玩家 %.3f 的七折射速）状态=%s" % [
 			ally.damage, ally.fire_interval, RunState.get_player_fire_interval(), ally.state_name()])
 		print("[Battle自检] 右上角 HUD: %s / 队友 %s %s %s" % [
 			_hud_gold.text, ALLY_NAME, _hud_ally_hp.text, _hud_ally_state.text])
+
+
+## ESC 暂停菜单（关卡里也能叫出来；结算弹窗期间不响应）
+func _setup_pause_menu() -> void:
+	_pause_menu = PauseMenuScript.new()
+	add_child(_pause_menu)
+	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
+
+
+## 给队友找一个"玩家附近、且是地板"的出生点（避免生成到地形里卡住）
+## 用生成器留下的 arena_data.grid：0=地板 1=墙 2=外墙
+func _ally_spawn_position() -> Vector2:
+	var grid: Array = arena_data.get("grid", [])
+	var width: int = int(arena_data.get("width", 0))
+	var height: int = int(arena_data.get("height", 0))
+	var tile := float(ArenaGen.TILE_SIZE)
+	var player_cell := Vector2i(int(floor(player.global_position.x / tile)), int(floor(player.global_position.y / tile)))
+	if grid.is_empty() or width <= 0:
+		return player.global_position
+	for radius in range(0, 7):
+		for offset_y in range(-radius, radius + 1):
+			for offset_x in range(-radius, radius + 1):
+				var cell := player_cell + Vector2i(offset_x, offset_y)
+				if cell.x < 1 or cell.y < 1 or cell.x >= width - 1 or cell.y >= height - 1:
+					continue
+				if int(grid[cell.y * width + cell.x]) != 0:
+					continue
+				return cell_to_world(cell)
+	if debug_print:
+		push_warning("[Battle] 队友没找到空地，直接放在玩家身上")
+	return player.global_position
+
+
+func _check_pause_input() -> void:
+	if _pause_menu == null or _pause_menu.is_open() or is_result_displayed:
+		return
+	if Input.is_action_just_pressed("pause"):
+		_pause_menu.open()
+
+
+func _on_quit_to_title_requested() -> void:
+	print("[Battle] 回到主界面（放弃本局，不留战绩）")
+	GameFlow.goto_title()
 
 
 func _context_floor() -> int:
@@ -333,6 +390,7 @@ func _process(delta: float) -> void:
 	if debug_instant_win and not _debug_win_started:
 		_debug_win_started = true
 		_start_debug_instant_win()     # 调试：任意关卡秒胜（走完整条 结算 -> 切场景 链路）
+	_check_pause_input()
 	_update_waves(delta)
 	_refresh_goal_hud()
 
