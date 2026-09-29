@@ -1,13 +1,13 @@
 extends Node2D
-## Hub：关卡之间的中间地图（M4-2）—— 可走动、无敌人。
+## 中间地图：关卡之间的中间地图（M4-2）—— 可走动、无敌人。
 ## 3 个固定位置各站一个角色，顺序固定：精英关 / 普通关 / 商店（左 -> 中 -> 右）。
 ## 玩家走近角色 -> 出现 按 E 交互；选中后开对话框（进入 / 取消）。
 
 const ArenaGen = preload("res://scene/arena/arena_generator.gd")
-const NpcScript = preload("res://scene/hub/npc.gd")
-const DialogueBoxScript = preload("res://scene/hub/dialogue_box.gd")
-const ShopPanelScript = preload("res://scene/hub/shop_panel.gd")
-const LevelReportScript = preload("res://scene/hub/level_report.gd")
+const NpcScript = preload("res://scene/midmap/npc.gd")
+const DialogueBoxScript = preload("res://scene/midmap/dialogue_box.gd")
+const ShopPanelScript = preload("res://scene/midmap/shop_panel.gd")
+const LevelReportScript = preload("res://scene/midmap/level_report.gd")
 const PauseMenuScript = preload("res://scene/ui/pause_menu.gd")
 
 @export_group("场地")
@@ -19,13 +19,13 @@ const PauseMenuScript = preload("res://scene/ui/pause_menu.gd")
 @export var debug_dialogue_test: bool = false
 ## 调试：自动对话针对哪个角色（elite / battle / shop，空 = 第一个）
 @export var debug_dialogue_kind: String = ""
-## 调试：进入 Hub 时预支多少金币（单独测商店用；0 = 不预支）
+## 调试：进入 中间地图 时预支多少金币（单独测商店用；0 = 不预支）
 @export var debug_start_gold: int = 0
-## 调试：进入 Hub 时预支多少生命上限（测生命 HUD 用；0 = 不预支）
+## 调试：进入 中间地图 时预支多少生命上限（测生命 HUD 用；0 = 不预支）
 @export var debug_start_health: int = 0
-## 调试：进入 Hub 时直接雇一个队友（测队友用）
+## 调试：进入 中间地图 时直接雇一个队友（测队友用）
 @export var debug_start_ally: bool = false
-## 调试：进入 Hub 时强制层数（测最终层的 BOSS 位置用；0 = 用真实层数）
+## 调试：进入 中间地图 时强制层数（测最终层的 BOSS 位置用；0 = 用真实层数）
 @export var debug_floor: int = 0
 
 ## 3 个固定位置（相对地图中心的格偏移）
@@ -53,28 +53,28 @@ var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"
 
 
 func _ready() -> void:
-	MusicManager.play_hub()               # 大厅曲（Overworld）
+	MusicManager.play_midmap()               # 大厅曲（Overworld）
 	# 所有调试开关只在调试构建生效：发布版（导出的 exe）自动隐藏
 	if OS.is_debug_build():
 		# 调试开关先于一切生效：层数决定三个位置的角色类型，必须在 _spawn_npcs() 之前赋值
 		if debug_floor > 0:
 			RunState.floor_index = debug_floor
-			print("[Hub] 调试: 强制层数 = %d" % debug_floor)
+			print("[MidMap] 调试: 强制层数 = %d" % debug_floor)
 		if debug_start_gold > 0:
 			RunState.add_gold(debug_start_gold)
-			print("[Hub] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
+			print("[MidMap] 调试: 预支金币 %d -> 当前 %d" % [debug_start_gold, RunState.gold])
 		for _index in range(maxi(debug_start_health, 0)):
 			RunState.buy_max_health()
 		if debug_start_ally:
 			RunState.ally_pending = true
-			print("[Hub] 调试: 预支一个队友")
+			print("[MidMap] 调试: 预支一个队友")
 	if debug_start_health > 0:
-		print("[Hub] 调试: 预支生命 +%d -> 当前 %d/%d" % [
+		print("[MidMap] 调试: 预支生命 +%d -> 当前 %d/%d" % [
 			debug_start_health, RunState.current_health, RunState.max_health])
 	var use_seed := arena_seed if arena_seed != 0 else randi()
 	var generator = ArenaGen.new()
-	# Hub 很小（默认 12x6），生成器有 24x16 的下限，所以这里直接铺一张干净的小房间
-	arena_data = _build_hub_arena(arena_width, arena_height)
+	# 中间地图 很小（默认 12x6），生成器有 24x16 的下限，所以这里直接铺一张干净的小房间
+	arena_data = _build_midmap_arena(arena_width, arena_height)
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 
 	_player = $Player as Player
@@ -88,8 +88,8 @@ func _ready() -> void:
 	if not RunState.health_changed.is_connected(_on_run_state_health_changed):
 		RunState.health_changed.connect(_on_run_state_health_changed)
 
-	# HUD：Hub 没有时间限制 → 删掉时钟与绿条，生命值上移一行（沿用 M3 定的规则）
-	_apply_hub_hud_layout()
+	# HUD：中间地图 没有时间限制 → 删掉时钟与绿条，生命值上移一行（沿用 M3 定的规则）
+	_apply_midmap_hud_layout()
 
 	_spawn_npcs()
 	_setup_dialogue()
@@ -99,8 +99,8 @@ func _ready() -> void:
 	_setup_pause_menu()
 	if OS.is_debug_build() and debug_dialogue_test:
 		_start_debug_dialogue_test()
-		print("[Hub] 调试: 已开启自动对话测试")
-	print("[Hub] 第 %d 层中间地图 seed=%d 场地 %dx%d 角色=%s" % [
+		print("[MidMap] 调试: 已开启自动对话测试")
+	print("[MidMap] 第 %d 层中间地图 seed=%d 场地 %dx%d 角色=%s" % [
 		RunState.floor_index, use_seed, arena_data["width"], arena_data["height"], str(npcs.map(
 			func(npc) -> String: return npc.title))])
 
@@ -109,9 +109,9 @@ func _ready() -> void:
 func _spawn_npcs() -> void:
 	# 用户指定（本轮）：三个位置随机刷关卡，没有普通关时保底刷一个普通关；
 	# BOSS 层（第 5 / 10 层）固定 商店 - BOSS - 商店
-	var kinds: Array[String] = RunState.hub_kinds()
+	var kinds: Array[String] = RunState.midmap_kinds()
 	if RunState.is_boss_floor():
-		print("[Hub] BOSS 层（第 %d 层）：左右商店 中间 BOSS" % RunState.floor_index)
+		print("[MidMap] BOSS 层（第 %d 层）：左右商店 中间 BOSS" % RunState.floor_index)
 	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
@@ -138,8 +138,8 @@ func _npc_title(kind: String) -> String:
 	return RunState.kind_title(kind)
 
 
-## Hub 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
-func _build_hub_arena(w: int, h: int) -> Dictionary:
+## 中间地图 直接铺一张 12x6 的小房间（外圈 1 格墙 + 内部全空），不走生成器
+func _build_midmap_arena(w: int, h: int) -> Dictionary:
 	var width := maxi(w, 8)
 	var height := maxi(h, 5)
 	var grid: Array = []
@@ -152,7 +152,7 @@ func _build_hub_arena(w: int, h: int) -> Dictionary:
 		grid[y * width] = ArenaGen.CELL_EDGE
 		grid[y * width + width - 1] = ArenaGen.CELL_EDGE
 	return {
-		"ok": true, "mode": "hub", "width": width, "height": height, "grid": grid,
+		"ok": true, "mode": "midmap", "width": width, "height": height, "grid": grid,
 		"doors": [], "spawns": [], "player_spawn": Vector2i(int(floor(float(width) / 2.0)), int(floor(float(height) / 2.0))),
 		"room_count": 1, "obstacles": [], "floor_count": (width - 2) * (height - 2), "message": "",
 	}
@@ -234,7 +234,7 @@ func _setup_gold_hud() -> void:
 	if not RunState.gold_changed.is_connected(_on_gold_changed):
 		RunState.gold_changed.connect(_on_gold_changed)
 	_refresh_gold_hud()
-	print("[Hub] 金币 HUD 就绪: %s" % _gold_hud.text)
+	print("[MidMap] 金币 HUD 就绪: %s" % _gold_hud.text)
 	_check_gold_hud_rect.call_deferred()
 	_check_health_sync.call_deferred()
 
@@ -245,7 +245,7 @@ func _check_gold_hud_rect() -> void:
 		return
 	var rect: Rect2 = (_gold_hud.get_parent() as Control).get_global_rect()
 	var screen := Vector2(get_viewport().get_visible_rect().size)
-	print("[Hub] 金币 HUD 矩形位置 %s 宽高 %dx%d 屏幕 %dx%d 右边距 %d 上边距 %d" % [
+	print("[MidMap] 金币 HUD 矩形位置 %s 宽高 %dx%d 屏幕 %dx%d 右边距 %d 上边距 %d" % [
 		str(rect.position), int(rect.size.x), int(rect.size.y),
 		int(screen.x), int(screen.y), int(screen.x - rect.end.x), int(rect.position.y)])
 
@@ -255,12 +255,12 @@ func _on_gold_changed(_amount: int) -> void:
 
 
 func _on_run_state_health_changed(_current: int, _maximum: int) -> void:
-	_sync_player_health()          # 商店买 +1 生命后，Hub 的 HUD 要立刻跟着变
+	_sync_player_health()          # 商店买 +1 生命后，中间地图 的 HUD 要立刻跟着变
 
 
 ## 把整局状态的生命值同步到玩家节点 + 刷新 HUD 文本
 ## （刷新标签的 _update_life_count_label() 在战斗场景的 game.gd 里，
-##   Hub 是自己的脚本，不刷的话标签会一直停在场景默认值 "X 3"）
+##   中间地图 是自己的脚本，不刷的话标签会一直停在场景默认值 "X 3"）
 func _sync_player_health() -> void:
 	if _player == null:
 		return
@@ -274,7 +274,7 @@ func _sync_player_health() -> void:
 ## 自检：玩家身上的血 & HUD 文本是否和整局状态一致（deferred，等 HUD 刷过一帧）
 func _check_health_sync() -> void:
 	var label := $Player/HUDLayer/LifeCountLabel as Label
-	print("[Hub自检] 生命: 玩家 %d/%d  HUD文本=%s  整局 %d/%d" % [
+	print("[MidMap自检] 生命: 玩家 %d/%d  HUD文本=%s  整局 %d/%d" % [
 		_player.current_health, _player.max_health,
 		label.text if label != null else "?", RunState.current_health, RunState.max_health])
 
@@ -284,8 +284,8 @@ func _refresh_gold_hud() -> void:
 		_gold_hud.text = "金币 %d" % RunState.gold
 
 
-## Hub 无时间限制：删时钟 + 绿条，生命值上移（与 M3 的规则一致）
-func _apply_hub_hud_layout() -> void:
+## 中间地图 无时间限制：删时钟 + 绿条，生命值上移（与 M3 的规则一致）
+func _apply_midmap_hud_layout() -> void:
 	var hud := $Player/HUDLayer as Node2D
 	if hud == null:
 		return
@@ -357,7 +357,7 @@ func _open_npc_dialogue(npc: Node) -> void:
 	_dialogue.show_dialogue(npc.title, [body], ["进入", "取消"])
 	_sync_player_lock()                         # 开完再锁，_is_ui_open() 这时才是 true
 	SfxPlayer.interact()
-	print("[Hub] 对话打开: %s" % npc.title)
+	print("[MidMap] 对话打开: %s" % npc.title)
 
 
 ## 关卡之间的汇报（上一关成绩 + 本层通讯）：只有刚打完一关才会弹
@@ -378,7 +378,7 @@ func _show_pending_level_report() -> void:
 		return                              # 层数对不上（例如调试跳关）就不显示
 	_report.show_report(report, RunState.floor_index)
 	_sync_player_lock()
-	print("[Hub] 本关汇报: 上一关 第 %d 层 %s 击杀 %d 用时 %.1f 秒 金币 +%d" % [
+	print("[MidMap] 本关汇报: 上一关 第 %d 层 %s 击杀 %d 用时 %.1f 秒 金币 +%d" % [
 		int(report.get("floor", 0)), RunState.kind_title(String(report.get("node_type", ""))),
 		int(report.get("kills", 0)), float(report.get("elapsed", 0.0)), int(report.get("gold_gained", 0))])
 
@@ -388,7 +388,7 @@ func _on_report_closed() -> void:
 	_interact_lock = 0.25
 
 
-## ESC 暂停菜单（Hub 里也能叫出来）
+## ESC 暂停菜单（中间地图 里也能叫出来）
 func _setup_pause_menu() -> void:
 	_pause_menu = PauseMenuScript.new()
 	add_child(_pause_menu)
@@ -397,14 +397,14 @@ func _setup_pause_menu() -> void:
 
 func _on_quit_to_title_requested() -> void:
 	# 用户选"回到主界面"：直接放弃这一局，不写战绩
-	print("[Hub] 回到主界面（放弃本局，不留战绩）")
+	print("[MidMap] 回到主界面（放弃本局，不留战绩）")
 	GameFlow.goto_title()
 
 
 func _on_shop_closed() -> void:
 	_sync_player_lock()
 	_interact_lock = 0.25
-	print("[Hub] 离开商店 金币=%d" % RunState.gold)
+	print("[MidMap] 离开商店 金币=%d" % RunState.gold)
 
 
 func _open_shop() -> void:
@@ -412,7 +412,7 @@ func _open_shop() -> void:
 		return
 	_shop.open()
 	SfxPlayer.interact()
-	print("[Hub] 打开商店 金币=%d" % RunState.gold)
+	print("[MidMap] 打开商店 金币=%d" % RunState.gold)
 
 
 ## 任一界面（对话/商店）打开时锁住玩家移动；集中一处判断，避免两边互相解锁
@@ -430,12 +430,12 @@ func _sync_player_lock() -> void:
 func _on_dialogue_option(index: int) -> void:
 	var kind := String(_active_npc.kind) if _active_npc != null else ""
 	if index != 0 or kind.is_empty():
-		print("[Hub] 选择了取消")
+		print("[MidMap] 选择了取消")
 		return
 	if kind == "shop":
 		_open_shop()
 		return
-	print("[Hub] 进入关卡: %s（第 %d 层）" % [kind, RunState.floor_index])
+	print("[MidMap] 进入关卡: %s（第 %d 层）" % [kind, RunState.floor_index])
 	# 延迟一帧再切：不要在输入回调里把当前场景直接摘掉，
 	# 否则回调后续代码（以及对话框的收尾）会作用在已离开场景树的节点上。
 	GameFlow.start_battle.call_deferred({"floor": RunState.floor_index, "node_type": kind})
@@ -476,7 +476,7 @@ func _start_debug_dialogue_test() -> void:
 
 func _debug_open_first_npc() -> void:
 	if _report != null and _report.is_open():
-		print("[Hub] 调试: 先关掉本关汇报")
+		print("[MidMap] 调试: 先关掉本关汇报")
 		_report.debug_close()
 	var target: Node = null
 	for npc in npcs:
@@ -484,16 +484,16 @@ func _debug_open_first_npc() -> void:
 			target = npc
 			break
 	if target == null:
-		print("[Hub] 调试: 没找到类型为 %s 的角色" % debug_dialogue_kind)
+		print("[MidMap] 调试: 没找到类型为 %s 的角色" % debug_dialogue_kind)
 		return
-	print("[Hub] 调试: 打开角色对话 [%s]" % String(target.title))
+	print("[MidMap] 调试: 打开角色对话 [%s]" % String(target.title))
 	_open_npc_dialogue(target)
 
 
 func _debug_report_and_close() -> void:
 	var shop_open: bool = _shop != null and _shop.is_open()
 	var locked: bool = _player != null and not _player.is_physics_processing()
-	print("[Hub] 调试: 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
+	print("[MidMap] 调试: 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
 	if shop_open:
 		var event := InputEventKey.new()
 		event.physical_keycode = KEY_ESCAPE
@@ -504,11 +504,11 @@ func _debug_report_and_close() -> void:
 func _debug_report_after_close() -> void:
 	var shop_open: bool = _shop != null and _shop.is_open()
 	var locked: bool = _player != null and not _player.is_physics_processing()
-	print("[Hub] 调试: 关闭后 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
+	print("[MidMap] 调试: 关闭后 商店开=%s 玩家已锁=%s 金币=%d" % [shop_open, locked, RunState.gold])
 
 
 func _debug_pick_enter() -> void:
-	print("[Hub] 调试: 发送真实 E 按键事件（走 _unhandled_input，和玩家按键完全同一条路）")
+	print("[MidMap] 调试: 发送真实 E 按键事件（走 _unhandled_input，和玩家按键完全同一条路）")
 	var event := InputEventKey.new()
 	event.physical_keycode = KEY_E
 	event.pressed = true

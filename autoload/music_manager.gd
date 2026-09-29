@@ -1,7 +1,7 @@
 extends Node
 ## 全局音乐管理（autoload: MusicManager）
 ## 曲目分配（用户指定）：
-##   大厅（Hub） / 标题界面        -> 1-27 Journey of the Prairie King (Overworld)
+##   大厅（中间地图） / 标题界面        -> 1-27 Journey of the Prairie King (Overworld)
 ##   BOSS 战（第 5 / 10 层）       -> 1-29 Journey of the Prairie King (Final Boss & Ending)
 ##   其余（普通关 / 精英关 / 经典模式） -> 1-28 Journey of the Prairie King (The Outlaw)
 ##
@@ -48,7 +48,7 @@ func is_playing() -> bool:
 	return false
 
 
-func play_hub() -> void:
+func play_midmap() -> void:
 	play(TRACK_OVERWORLD)
 
 

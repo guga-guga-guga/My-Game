@@ -1,5 +1,5 @@
 extends Area2D
-## Hub 上的可交互角色（M4-2）：全部用代码构建，复用现有素材，零新美术。
+## 中间地图 上的可交互角色（M4-2）：全部用代码构建，复用现有素材，零新美术。
 ## kind: "battle"(普通关) / "elite"(精英关) / "shop"(商店)
 ## 走近会显示头顶提示；按 E 的交互逻辑在 M4-3 接对话框。
 
@@ -66,7 +66,7 @@ func _on_body_entered(body: Node2D) -> void:
 	_in_range = true
 	if _prompt != null:
 		_prompt.visible = true
-	print("[Hub] 走近 [%s]" % title)
+	print("[MidMap] 走近 [%s]" % title)
 
 
 func _on_body_exited(body: Node2D) -> void:

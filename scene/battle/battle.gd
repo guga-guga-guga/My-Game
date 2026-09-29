@@ -45,7 +45,7 @@ const HUD_ICON_SIZE := 48.0
 
 ## 调试: 直接模拟击败 Boss（验证"通关结算 -> 回标题"整条链路）
 @export var debug_instant_boss_win: bool = false
-## 调试: 任意关卡都直接模拟胜利（验证"胜利 -> 回 Hub -> 层数 +1"整条链路）
+## 调试: 任意关卡都直接模拟胜利（验证"胜利 -> 回 中间地图 -> 层数 +1"整条链路）
 @export var debug_instant_win: bool = false
 
 var arena_data: Dictionary = {}
@@ -251,7 +251,7 @@ func _setup_battle_hud() -> void:
 func _make_hud_panel(_unused_offset: Vector2) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.28)      # 和 Hub 金币 HUD 一致的半透明底
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.28)      # 和 中间地图 金币 HUD 一致的半透明底
 	style.set_corner_radius_all(4)
 	style.set_content_margin_all(10)
 	panel.add_theme_stylebox_override("panel", style)
@@ -673,7 +673,7 @@ func _on_result_dialog_exit_requested() -> void:
 			GameFlow.goto_title()
 		else:
 			RunState.advance_floor()           # 普通关/精英关/中途 BOSS 胜利: 层数 +1
-			GameFlow.goto_hub()                # 回中间地图
+			GameFlow.goto_midmap()                # 回中间地图
 	else:
 		RunState.finish_run(false)             # 失败: 整局结束
 		GameFlow.goto_title()
@@ -688,7 +688,7 @@ func _record_run_progress() -> void:
 	RunState.run_elapsed += _get_round_elapsed_time()
 	# 生命值跨关卡保留：把这一场打完的血量写回整局状态
 	RunState.set_health(_get_player_current_health(), player.max_health)
-	# 本关成绩：留给 Hub 在关卡之间做汇报
+	# 本关成绩：留给 中间地图 在关卡之间做汇报
 	RunState.last_level_report = {
 		"floor": RunState.floor_index,
 		"node_type": String(goal.get("node_type", "")),
