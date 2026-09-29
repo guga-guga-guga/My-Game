@@ -6,7 +6,7 @@ extends CanvasLayer
 ##   W S / 上下键  切换选项
 ## 鼠标点击选项同样有效。
 ## 选完先发 option_selected(index) 再发 closed —— 顺序很重要：
-## Hub 要在 closed（清空 _active_npc）之前拿到当前角色。
+## 中间地图 要在 closed（清空 _active_npc）之前拿到当前角色。
 
 signal option_selected(index: int)
 signal closed
@@ -220,7 +220,7 @@ func _activate(index: int) -> void:
 	var chosen := clampi(index, 0, _options.size() - 1)
 	_selected = chosen
 	SfxPlayer.ui_click()
-	option_selected.emit(chosen)      # 先发选项（Hub 此时还能读到 _active_npc）
+	option_selected.emit(chosen)      # 先发选项（中间地图 此时还能读到 _active_npc）
 	_close()
 
 

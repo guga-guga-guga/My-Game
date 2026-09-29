@@ -469,23 +469,23 @@ scene/enemy.gd         # 可选：金币掉落
 
 ---
 
-## 13. M4：中间地图（Hub）—— 已与用户确认的设计（2026-09-27）
+## 13. M4：中间地图—— 已与用户确认的设计（2026-09-27）
 
 > 目的：把现在"节点按钮式路线图"（`MapScreen`）换成**可以走动的中间地图**，
 > 玩家在打完一关后进入这张图，自己走到想去的角色那里交互。
 
 ### 13.1 流程
 ```
-战斗胜利 → RunState.advance_floor() → Hub（可走动，无敌人）
+战斗胜利 → RunState.advance_floor() → 中间地图（可走动，无敌人）
    → 走到某个角色旁 → 出现「按 E 交互」提示 → 按 E 弹对话框
        ├─ 进入地图  → GameFlow.start_battle({floor, node_type})
-       ├─ 进入商店  → 商店界面（购买后回到 Hub，可继续交互）
+       ├─ 进入商店  → 商店界面（购买后回到 中间地图，可继续交互）
        └─ 取消      → 关闭对话框，继续走动
-   → 战斗胜利 → 回到 Hub（层数 +1，角色重新随机）
+   → 战斗胜利 → 回到 中间地图（层数 +1，角色重新随机）
    → 战斗失败 → 回标题，整局结束
 ```
 
-### 13.2 Hub 上的三类角色（全部复用现有素材，零新美术）
+### 13.2 中间地图 上的三类角色（全部复用现有素材，零新美术）
 | 角色 | 代表 | 素材做法 | 交互后 |
 |---|---|---|---|
 | **精英关** | 紫色敌人 | 敌人 SpriteFrames + `modulate` 染紫 | 对话框 → 进入精英关（沿用 M2 规则：击杀 N + 撑满 T 秒的 ALL 目标） |
@@ -493,7 +493,7 @@ scene/enemy.gd         # 可选：金币掉落
 | **商店** | 玩家形象 | 玩家贴图（静态一帧） | 对话框 → 商店界面 |
 
 **数量规则（用户 2026-09-27 二次确认，已取代之前的 0~3 个方案）**：
-- Hub 上有 **3 个固定位置，每个位置必定站着一个角色**（不会出现空位）
+- 中间地图 上有 **3 个固定位置，每个位置必定站着一个角色**（不会出现空位）
 - **角色类型随机**：精英 / 普通 / 商店 三选一，彼此独立 → 可能三个都是普通关，也可能这层没有商店
 - **因此不需要"继续前进"出口**（不会出现无可交互对象而卡死的情况）
 - 位置固定、类型随机：位置坐标写死，类型用 `floor_index` 播种，便于复现
@@ -517,22 +517,22 @@ scene/enemy.gd         # 可选：金币掉落
 ### 13.5 实现步骤（每步都会 headless 自测 + 可单独验收）
 1. **数据层**：`RunState` 增加 `current_health / max_health / player_damage / fire_rate_level / gold`，
    战斗开场写入、结算写回（纯数据，先做单测）
-2. **Hub 场景**：`scene/hub/hub.tscn` + `hub.gd`（可走动的小场地、摄像机跟随、无敌人），
+2. **中间地图 场景**：`scene/midmap/midmap.tscn` + `midmap.gd`（可走动的小场地、摄像机跟随、无敌人），
    交互对象 = `Npc.tscn`（Area2D + 提示 + 按 E）
 3. **对话框**：`DialogueBox`（底部对话框 + 打字机 + 选项分支），复用 `DialogueManager` 骨架
 4. **商店界面**：代码生成的购买面板（三项 + 金币 + 价格递增 + 买不起置灰）
-5. **接线**：`GameFlow` 增加 `goto_hub()`；战斗胜利 → Hub；`MapScreen` 保留为调试入口（或下线）
+5. **接线**：`GameFlow` 增加 `goto_midmap()`；战斗胜利 → 中间地图；`MapScreen` 保留为调试入口（或下线）
 
 ### 13.6 待确认/可调项
-- Hub 场地尺寸与走动速度（默认：沿用现有 16px 瓦片、用 `ArenaGenerator.MODE_BOSS` 生成一张小图 24×16）
+- 中间地图 场地尺寸与走动速度（默认：沿用现有 16px 瓦片、用 `ArenaGenerator.MODE_BOSS` 生成一张小图 24×16）
 - 商店价格与成长幅度（用户已选"用提议的数值，先跑通再调"）
 - ~~「继续前进」出口~~ → **不要**（已确认 3 个位置必定有角色）
 
-## 14. M4-5 实施记录：战斗胜利 -> 中间地图（Hub）循环
+## 14. M4-5 实施记录：战斗胜利 -> 中间地图循环
 
 ### 14.1 流程改动
-- `GameFlow` 新增 `HUB_SCENE` / `goto_hub()`；`start_new_run()` 从「标题 -> 路线图」改为「标题 -> Hub」
-- 关卡胜利（非 BOSS）：`RunState.advance_floor()` + `GameFlow.goto_hub()`（原来是 `goto_map()`）
+- `GameFlow` 新增 `MIDMAP_SCENE` / `goto_midmap()`；`start_new_run()` 从「标题 -> 路线图」改为「标题 -> 中间地图」
+- 关卡胜利（非 BOSS）：`RunState.advance_floor()` + `GameFlow.goto_midmap()`（原来是 `goto_map()`）
 - BOSS 关胜利：`RunState.finish_run(true)` + 结算弹窗「通关 / 整局总结」+ 回标题（不变）
 - 失败：`finish_run(false)` + 回标题（不变）
 - 路线图 `MapScreen` 保留为**调试入口**，不再出现在主流程里
@@ -541,14 +541,14 @@ scene/enemy.gd         # 可选：金币掉落
 - 胜利结算文案改为「本层目标达成 回中间地图」（BOSS 关仍是整局总结）
 
 ### 14.2 最终层的 BOSS 入口
-Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默认第 8 层）时**中间位置变成 BOSS 关**：
+中间地图 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默认第 8 层）时**中间位置变成 BOSS 关**：
 - kinds 变为 `["elite", "boss", "shop"]`，标题显示「BOSS」，沿用精英关那排图并染红区分
 - 对话正文换成「最终决战 准备好了吗？」
 - 进入后走 `GameFlow.start_battle({node_type: "boss"})`，Battle 按 boss 目标生成场地
 
 ### 14.3 验证（headless 全链路）
-1. 第 8 层 Hub：角色 = 精英关 / BOSS / 商店；进入后场地 房间=1 红门=4（符合 BOSS 场地规则）
-2. 完整循环：连续 7 次「胜利 -> 回 Hub -> 层数 +1」，从第 1 层一路推到第 8 层，
+1. 第 8 层 中间地图：角色 = 精英关 / BOSS / 商店；进入后场地 房间=1 红门=4（符合 BOSS 场地规则）
+2. 完整循环：连续 7 次「胜利 -> 回 中间地图 -> 层数 +1」，从第 1 层一路推到第 8 层，
    第 8 层中间位置自动变成 BOSS
 3. 击败 BOSS：结算弹窗显示整局总结（到达层数 8/8、总击杀、用时、金币），
    `局进行中=false / 已通关=true` -> 回标题
@@ -556,10 +556,10 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 ### 14.4 相关调试开关
 | 开关 | 位置 | 作用 |
 |---|---|---|
-| `debug_dialogue_test` | hub.gd | 自动打开角色对话并发送真实 E 键 |
-| `debug_dialogue_kind` | hub.gd | 自动对话针对哪个角色（elite / battle / shop / boss） |
-| `debug_floor` | hub.gd | 强制层数（测最终层 BOSS 位置用） |
-| `debug_start_gold` | hub.gd | 进入 Hub 预支金币（单独测商店用） |
+| `debug_dialogue_test` | midmap.gd | 自动打开角色对话并发送真实 E 键 |
+| `debug_dialogue_kind` | midmap.gd | 自动对话针对哪个角色（elite / battle / shop / boss） |
+| `debug_floor` | midmap.gd | 强制层数（测最终层 BOSS 位置用） |
+| `debug_start_gold` | midmap.gd | 进入 中间地图 预支金币（单独测商店用） |
 | `debug_instant_win` | battle.gd | 任意关卡秒胜，走完整条结算 + 切场景链路 |
 | `debug_instant_boss_win` | battle.gd | 仅 BOSS 关秒胜 |
 
@@ -568,11 +568,11 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 ### 15.1 层数与 BOSS 层
 - `RunState.MAX_FLOOR` 由 8 改为 **10**
 - `RunState.BOSS_FLOORS = [5, 10]`：第 5 层是**中途 BOSS**，第 10 层是**最终 BOSS**
-- 中途 BOSS 胜利：`advance_floor()` + 回 Hub（`is_active` 保持 true，结算弹窗写「BOSS 击破」）
+- 中途 BOSS 胜利：`advance_floor()` + 回 中间地图（`is_active` 保持 true，结算弹窗写「BOSS 击破」）
 - 最终 BOSS 胜利：`finish_run(true)` + 整局总结 -> 标题
 - 失败：任何时候都 `finish_run(false)` -> 标题（整局结束）
 
-### 15.2 三个位置的刷新规则（`RunState.hub_kinds(floor)`）
+### 15.2 三个位置的刷新规则（`RunState.midmap_kinds(floor)`）
 - **BOSS 层（第 5 / 10 层）**：固定 **商店 - BOSS - 商店**（左右各一个商店，打 BOSS 前方便补给）
 - **其它层**：三个位置各自从 `精英关 / 普通关 / 商店` 里随机
   - 若这一层**没有刷出普通关**，则随机挑一个位置保底改成普通关
@@ -580,22 +580,22 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 - 非 BOSS 层不会刷出 BOSS
 
 ### 15.3 自检
-- `tools/test_hub_kinds.tscn`（7 项）：BOSS 层固定组合、非 BOSS 层类型合法/不刷 BOSS/必有一个普通关、
+- `tools/test_midmap_kinds.tscn`（7 项）：BOSS 层固定组合、非 BOSS 层类型合法/不刷 BOSS/必有一个普通关、
   同层可复现、随机有效（>= 5 种组合）
   - 实测 1~40 层：商店共出现 32 次、15 种组合、38 个非 BOSS 层里 14 层没有精英关（说明随机在起作用）
-- 端到端：第 5 层 Hub = 商店/BOSS/商店 -> 进 BOSS -> 秒胜 -> **层数 6、局进行中 false、已通关 false**（继续循环）
+- 端到端：第 5 层 中间地图 = 商店/BOSS/商店 -> 进 BOSS -> 秒胜 -> **层数 6、局进行中 false、已通关 false**（继续循环）
 
 ## 16. 关卡之间的汇报（M4-7）
 
 ### 16.1 数据流
 - Battle 离场时（`_record_run_progress()`）把本关成绩写进 `RunState.last_level_report`：
   `floor / node_type / goal_text / won / kills / elapsed / gold_gained / gold_total / health / max_health`
-- Hub `_ready()` 里检查：非空 **且** `report.floor == RunState.floor_index - 1` 时弹一次汇报，
+- 中间地图 `_ready()` 里检查：非空 **且** `report.floor == RunState.floor_index - 1` 时弹一次汇报，
   然后立刻清空（只弹一次，不会重复出现）
 - 层数对不上（例如用调试跳关）就静默丢弃
 
 ### 16.2 表现
-- `scene/hub/level_report.gd`（纯代码 CanvasLayer，layer=12 高于对话框 10 / 商店 11）
+- `scene/midmap/level_report.gd`（纯代码 CanvasLayer，layer=12 高于对话框 10 / 商店 11）
 - **用户决定：不做关卡之间的剧情/通讯文案**，只保留成绩汇报
 - 标题「第 N 层 汇报」（N = 即将打的这一层）；正文 4 行：
   上一关 第 X 层 类型 + 达成状态 / 本关目标 / 击杀 + 用时 / 金币 + 总计 + 生命
@@ -607,7 +607,7 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 ### 16.3 自检
 - `tools/test_level_report.tscn`：25 项（字体字形、空数据不弹、标题/正文各行内容、未达成文案、
   E 关闭、ESC 关闭、closed 信号次数）
-- 端到端：自动打关 -> 秒胜 -> 回 Hub，日志确认「本关汇报: 上一关 第 1 层 普通关 击杀 0 用时 1.3 秒 金币 +8」，
+- 端到端：自动打关 -> 秒胜 -> 回 中间地图，日志确认「本关汇报: 上一关 第 1 层 普通关 击杀 0 用时 1.3 秒 金币 +8」，
   之后依次推进到第 5 层仍是 商店-BOSS-商店
 
 ## 17. M6 数值平衡（已实施 · 用户确认）
@@ -642,21 +642,21 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 3. **精英关实际时长 = 限时**（它是"击杀 + 撑满"两条全达成），不是击杀所需时间。
    报告里原来那列按击杀时间算，是错的。
 
-## 18. Bug 修复：Hub 里生命值永远显示 X3（2026-09-27 用户发现）
+## 18. Bug 修复：中间地图 里生命值永远显示 X3（2026-09-27 用户发现）
 
-**现象**：在中间地图（Hub）里生命值一直是 `X 3`，商店买了 +1 生命也不变。
+**现象**：在中间地图里生命值一直是 `X 3`，商店买了 +1 生命也不变。
 
 **原因**（两层）：
-1. Hub 从没把 `RunState` 的生命值同步到玩家节点上 —— 玩家节点一直用场景默认的 3
+1. 中间地图 从没把 `RunState` 的生命值同步到玩家节点上 —— 玩家节点一直用场景默认的 3
 2. 刷新 HUD 文本的 `_update_life_count_label()` 写在战斗场景的 `game.gd` 里，
-   Hub 用的是自己的 `hub.gd`，**没人刷这个标签**，所以即使值对了标签也不会变
+   中间地图 用的是自己的 `midmap.gd`，**没人刷这个标签**，所以即使值对了标签也不会变
 
 **修复**：
 - `RunState` 新增 `health_changed(current, maximum)` 信号，`buy_max_health()` / `set_health()` 里发
-- `hub.gd` 新增 `_sync_player_health()`：同步玩家节点 + 刷新 `LifeCountLabel` 文本（格式 `X %d`），
+- `midmap.gd` 新增 `_sync_player_health()`：同步玩家节点 + 刷新 `LifeCountLabel` 文本（格式 `X %d`），
   并在 `_ready` 和 `health_changed` 时调用
 - `battle.gd` 也接上 `health_changed`（同一次冒险里买血后进战斗更稳）
-- Hub 新增调试开关 `debug_start_health`（预支生命，专门测这个 HUD）
+- 中间地图 新增调试开关 `debug_start_health`（预支生命，专门测这个 HUD）
 
 **自检**：`tools/test_hub_health.tscn` 6 项 —— 玩家身上生命 = 整局、HUD 文本正确、
 商店买 +1 立刻变、跨关卡残血（剩 2）正确显示。
@@ -666,7 +666,7 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 ### 19.1 曲目分配
 | 场景 | 曲子 |
 |---|---|
-| 大厅（Hub 中间地图）+ 标题界面 | `1-27 Journey of the Prairie King (Overworld).mp3` |
+| 大厅（中间地图 中间地图）+ 标题界面 | `1-27 Journey of the Prairie King (Overworld).mp3` |
 | BOSS 战（第 5 / 10 层） | `1-29 Journey of the Prairie King (Final Boss & Ending).mp3` |
 | 其余（普通关 / 精英关 / 经典模式） | `1-28 Journey of the Prairie King (The Outlaw).mp3` |
 
@@ -674,15 +674,15 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 - 新增 autoload `MusicManager`（`autoload/music_manager.gd`），自己持有 `AudioStreamPlayer`
   - 用 autoload 而不是各场景自带的 `BgmPlayer`，好处是**跨场景不中断**：
     连续打两关普通关时曲子继续放，不会每关从头重播（同一首再调用直接 return）
-  - 入口：`play_hub()` / `play_title()`（与大厅同曲）/ `play_stage()` / `play_boss()`，另有 `play(path)` / `stop()`
+  - 入口：`play_midmap()` / `play_title()`（与大厅同曲）/ `play_stage()` / `play_boss()`，另有 `play(path)` / `stop()`
   - **交叉淡出**：两个 `AudioStreamPlayer` 轮流用，切歌时新曲从 `SILENT_DB(-40)` 淡入到
     `VOLUME_DB(-6)`、旧曲同时淡出并在淡完后再 `stop()`，时长 `FADE_TIME = 0.6s`；
     上一次淡入淡出没完就再切会直接接管（kill 掉旧 tween）
   - 音量 `VOLUME_DB = -6.0`（比音效轻一点，避免盖住枪声）
   - `process_mode = ALWAYS`：结算弹窗把 `time_scale` 设 0 时音乐不停
   - mp3 导入设置没勾循环，所以运行时 `duplicate()` 后手动 `loop = true`；另有 `finished -> play()` 兜底
-- 场景里原有的 `BgmPlayer` 关掉 `autoplay`（battle.tscn / game.tscn / hub.tscn），避免双份播放
-- 调用点：`hub.gd`（大厅曲）、`battle.gd`（按目标类型分 BOSS / 普通）、`game.gd`（经典模式）、`title.gd`（大厅曲）
+- 场景里原有的 `BgmPlayer` 关掉 `autoplay`（battle.tscn / game.tscn / midmap.tscn），避免双份播放
+- 调用点：`midmap.gd`（大厅曲）、`battle.gd`（按目标类型分 BOSS / 普通）、`game.gd`（经典模式）、`title.gd`（大厅曲）
 
 ### 19.3 自检
 - `tools/test_music.tscn`：**31 项** —— 三个文件存在且能加载、互不相同、各入口切到正确曲子、
@@ -776,7 +776,7 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 - 走位/开火都受道具加成影响（移速倍率、射速倍率，带持续时间）
 
 ### 22.3 战斗界面 HUD（用户要求：右侧金币下方）
-- 右上角两行：**金币 N**（战斗里也显示了，之前只有 Hub 有）+ **队友面板**
+- 右上角两行：**金币 N**（战斗里也显示了，之前只有 中间地图 有）+ **队友面板**
 - 队友面板：头像用 `resources/texture/icon.png`（48px）+ 名字「**队友A**」+ 血量 `X / 3` + 状态（自主攻击/保护）
 - 血量归零后显示 `0 / 3 阵亡`；没有队友时不显示这块
 - 血量和状态变化由队友的信号（`health_changed` / `state_changed`）驱动刷新
@@ -801,7 +801,7 @@ Hub 三个位置顺序固定（精英 / 普通 / 商店）。到最终层（默�
 - 菜单自己 `PROCESS_MODE_ALWAYS`，暂停了也能收键盘
 - 两个选项：**继续游戏** / **回到主界面**；操作沿用全局习惯：W/S 选择、E 或回车确认、
   **ESC 直接继续游戏**；鼠标点选项也能用（背后有半透明遮罩挡住误点）
-- 叫出来的时机：**Hub 和关卡里都能按**，但只在"没有别的界面打开"时响应 ——
+- 叫出来的时机：**中间地图 和关卡里都能按**，但只在"没有别的界面打开"时响应 ——
   商店/对话框/关卡汇报的 ESC 仍然优先关它们自己；结算弹窗期间不响应
 - 选「回到主界面」：先 `paused = false` 再切场景（否则标题界面点不动），
   并且**直接放弃这一局、不写战绩**（用户选择）；`RunState` 等下次「开始新局」时 reset

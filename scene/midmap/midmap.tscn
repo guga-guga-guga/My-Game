@@ -1,7 +1,7 @@
 [gd_scene format=4]
 
 [ext_resource type="Texture2D" uid="uid://dcl3t0epf8ajx" path="res://resources/texture/瓦片.png" id="1_dbls1"]
-[ext_resource type="Script" path="res://scene/hub/hub.gd" id="1_xwcet"]
+[ext_resource type="Script" path="res://scene/midmap/midmap.gd" id="1_xwcet"]
 [ext_resource type="Texture2D" uid="uid://d252dkt0lm3n4" path="res://resources/texture/动态瓦片.png" id="2_33cqm"]
 [ext_resource type="PackedScene" uid="uid://cwcyj4ebct83d" path="res://scene/player.tscn" id="3_33cqm"]
 [ext_resource type="Texture2D" uid="uid://ca65d27crgaol" path="res://resources/texture/道具ui.png" id="5_xlg7c"]
@@ -103,7 +103,7 @@ tags = {
 "title": "Wave Bank#269 (cowboy_dead)"
 }
 
-[node name="Hub" type="Node2D" unique_id=918257833]
+[node name="MidMap" type="Node2D" unique_id=918257833]
 script = ExtResource("1_xwcet")
 
 [node name="GroundTileMapLayer" type="TileMapLayer" parent="." unique_id=1241277176]

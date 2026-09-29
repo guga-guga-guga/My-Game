@@ -4,7 +4,7 @@ extends Node
 
 const TITLE_SCENE := "res://scene/title.tscn"
 const MAP_SCENE := "res://scene/map/map_screen.tscn"          # M4 起只作调试入口保留
-const HUB_SCENE := "res://scene/hub/hub.tscn"
+const MIDMAP_SCENE := "res://scene/midmap/midmap.tscn"
 ## M1/M2 建好新战斗场景后这里会自动切过去；在此之前回落到现在的经典战斗场景
 const BATTLE_SCENE := "res://scene/battle/battle.tscn"
 const LEGACY_BATTLE_SCENE := "res://scene/game.tscn"
@@ -30,15 +30,15 @@ func goto_map() -> void:
 
 
 ## M4-5: 关卡之间的中间地图（可走动 + 对话 + 商店）；每关胜利后回到这里
-func goto_hub() -> void:
+func goto_midmap() -> void:
 	_prepare_switch()
-	get_tree().change_scene_to_file(HUB_SCENE)
+	get_tree().change_scene_to_file(MIDMAP_SCENE)
 
 
 ## 标题界面开始新局入口
 func start_new_run() -> void:
 	RunState.reset()
-	goto_hub()
+	goto_midmap()
 
 
 ## 标题界面经典模式入口:保留原来的单关玩法

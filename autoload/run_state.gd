@@ -27,7 +27,7 @@ var total_kills: int = 0             ## 本局累计击杀
 var run_elapsed: float = 0.0         ## 本局累计用时 秒 
 
 # ---- 长效升级 M5 商店写入，Battle 开场读取 ----
-# ---- 局内成长（Hub 商店写入，Battle 开场读取；新开一局重置）----
+# ---- 局内成长（中间地图 商店写入，Battle 开场读取；新开一局重置）----
 ## 生命值：跨关卡保留（上一关剩多少，下一关就带多少）
 var max_health: int = BASE_MAX_HEALTH
 var current_health: int = BASE_MAX_HEALTH
@@ -46,7 +46,7 @@ var bonus_invincibility: float = 0.0
 ## 本层路线图 M3 由 RunMap 填充 ，M0 阶段留空
 var route: Array = []
 
-## 上一关的成绩汇报（关卡结束后由 Battle 写入，Hub 到达时展示一次后清空）
+## 上一关的成绩汇报（关卡结束后由 Battle 写入，中间地图 到达时展示一次后清空）
 ## 字段: floor / node_type / goal_text / won / kills / elapsed / gold_gained / gold_total / health / max_health
 var last_level_report: Dictionary = {}
 
@@ -108,7 +108,7 @@ func is_final_floor() -> bool:
 	return floor_index >= MAX_FLOOR
 
 
-## 节点类型的显示名（Hub 角色名 / 关卡汇报共用）
+## 节点类型的显示名（中间地图 角色名 / 关卡汇报共用）
 func kind_title(kind: String) -> String:
 	match kind:
 		"battle":
@@ -131,7 +131,7 @@ func is_boss_floor(index: int = -1) -> bool:
 ## - BOSS 层：固定 商店 - BOSS - 商店（打 BOSS 前左右各一个商店，方便补给）
 ## - 其它层：三个位置随机（精英关/普通关/商店），但没有普通关时保底塞一个普通关
 ## 同一层结果固定（用层数做随机种子），方便重进时一致、也方便复现
-func hub_kinds(index: int = -1) -> Array[String]:
+func midmap_kinds(index: int = -1) -> Array[String]:
 	var target_floor: int = floor_index if index < 0 else index
 	var kinds: Array[String] = []
 	if BOSS_FLOORS.has(target_floor):
@@ -189,7 +189,7 @@ func get_player_fire_interval() -> float:
 	return BASE_FIRE_INTERVAL / (maxf(fire_rate_multiplier, 0.01) * (1.0 + 0.1 * float(fire_rate_level)))
 
 
-# ---- 商店（Hub，本局内有效；新开一局重置）----
+# ---- 商店（中间地图，本局内有效；新开一局重置）----
 const SHOP_KEYS: Array[String] = ["health", "fire_rate", "damage"]
 const SHOP_PRICE_HEALTH := 15        ## 生命上限 +1 的初始价
 const SHOP_PRICE_FIRE_RATE := 25     ## 射速 +10% 的初始价

@@ -24,7 +24,7 @@ func is_open() -> bool:
 
 
 func _ready() -> void:
-	layer = 12                  # 比对话框(10)/商店(11) 高：回到 Hub 第一眼就看到它
+	layer = 12                  # 比对话框(10)/商店(11) 高：回到 中间地图 第一眼就看到它
 	_build_ui()
 	visible = false
 
