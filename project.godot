@@ -16,9 +16,9 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
 [autoload]
+
 MusicManager="*res://autoload/music_manager.gd"
 SfxPlayer="*res://autoload/sfx.gd"
-
 RunState="*res://autoload/run_state.gd"
 GameFlow="*res://autoload/game_flow.gd"
 DialogueManager="*res://autoload/dialogue_manager.gd"
