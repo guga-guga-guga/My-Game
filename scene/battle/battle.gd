@@ -324,6 +324,23 @@ func _spawn_ally_if_hired() -> void:
 			_hud_gold.text, ALLY_NAME, _hud_ally_hp.text, _hud_ally_state.text])
 
 
+## 失去焦点时自动暂停。
+## 网页里把游戏嵌进 iframe 后，玩家点到作品集的其它项目 / 浏览器其它标签页时，
+## 游戏会在后台继续跑（可能被打死）。这里在失焦时自动叫出暂停菜单，
+## 玩家切回来时仍停在暂停界面，点"继续游戏"即可。
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_auto_pause_on_focus_lost()
+
+
+func _auto_pause_on_focus_lost() -> void:
+	if not is_inside_tree():
+		return
+	if _pause_menu == null or _pause_menu.is_open() or is_result_displayed:
+		return
+	_pause_menu.open()
+
+
 ## ESC 暂停菜单（关卡里也能叫出来；结算弹窗期间不响应）
 func _setup_pause_menu() -> void:
 	_pause_menu = PauseMenuScript.new()

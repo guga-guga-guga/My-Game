@@ -23,6 +23,7 @@ var _players: Array[AudioStreamPlayer] = []
 var _active := 0
 var _current := ""
 var _tween: Tween = null
+var _resume_after_focus := ""     ## 网页失焦时被停掉的曲子，场景树恢复后自动接回
 
 
 func _ready() -> void:
@@ -67,6 +68,7 @@ func play_boss() -> void:
 
 ## 切歌；同一首正在放就直接返回（跨场景不重播的关键）
 func play(path: String) -> void:
+	_resume_after_focus = ""
 	if _players.is_empty():
 		return
 	if path.is_empty() or not ResourceLoader.exists(path):
@@ -105,6 +107,7 @@ func play(path: String) -> void:
 
 
 func stop() -> void:
+	_resume_after_focus = ""
 	if _tween != null and _tween.is_valid():
 		_tween.kill()
 	for player in _players:
@@ -136,3 +139,83 @@ func debug_is_playing(index: int) -> bool:
 	if index < 0 or index >= _players.size():
 		return false
 	return _players[index].playing
+
+## 网页（iframe 嵌入）失焦时停掉音乐：游戏被藏起来后音乐不能继续放给访客听。
+## 场景树恢复（玩家点"继续游戏"）后自动把这首接回来。只在 web 平台生效，桌面端行为不变。
+## ---------------- 与作品集站点的联动（仅 web） ----------------
+## 父页面会把 window.__portfolioGameVisible 写成 true/false 表示游戏是否正在显示。
+## 为什么不用失焦事件：实测把游戏层设成 visibility:hidden / display:none，
+## iframe 内的 document.visibilityState 仍为 visible，Godot 不会知道自己被藏起来了。
+const SITE_FLAG_JS := "typeof window.__portfolioGameVisible === 'undefined' ? '1' : (window.__portfolioGameVisible ? '1' : '0')"
+const SITE_POLL_MS := 300
+
+var _site_visible := true
+var _frozen_by_site := false
+var _time_scale_before_freeze := 1.0
+var _next_site_poll_ms := 0
+
+
+func _notification(what: int) -> void:
+	if not OS.has_feature("web"):
+		return
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_stop_and_remember("失焦")
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_resume_music("重新获得焦点")
+
+
+## 轮询父页面写进来的界面状态。用真实时间而不是 delta ——
+## 冻结期间 time_scale 为 0，delta 也是 0，靠 delta 计时就永远醒不过来了。
+func _process(_delta: float) -> void:
+	if not OS.has_feature("web"):
+		return
+	var now := Time.get_ticks_msec()
+	if now < _next_site_poll_ms:
+		return
+	_next_site_poll_ms = now + SITE_POLL_MS
+	var visible: bool = JavaScriptBridge.eval(SITE_FLAG_JS) != "0"   # eval 返回 Variant，必须显式标注类型
+	if visible == _site_visible:
+		return
+	_site_visible = visible
+	if visible:
+		print("[Music] 站点重新显示游戏：解冻 + 接回音乐")
+		_set_frozen_by_site(false)
+		_resume_music("站点显示")
+	else:
+		print("[Music] 站点隐藏了游戏：冻结 + 停止音乐")
+		_stop_and_remember("站点隐藏")
+		_set_frozen_by_site(true)
+
+
+## 冻结用 time_scale = 0（而不是 get_tree().paused）——
+## 标题界面这类没有暂停菜单的场景一旦被 paused，玩家回来将无法操作。
+## time_scale = 0 只让 delta 变 0，输入与 UI 仍然响应，是安全的冻结方式。
+func _set_frozen_by_site(on: bool) -> void:
+	if on == _frozen_by_site:
+		return
+	_frozen_by_site = on
+	if on:
+		_time_scale_before_freeze = Engine.time_scale
+		Engine.time_scale = 0.0
+	else:
+		Engine.time_scale = _time_scale_before_freeze
+
+
+## 停音乐并记住曲目，等重新显示时接回
+func _stop_and_remember(why: String) -> void:
+	if _current.is_empty():
+		return
+	var resume_path := _current
+	stop()                                  # stop() 会清掉标记，所以要在它之后赋值
+	_resume_after_focus = resume_path
+	print("[Music] %s：停止音乐（%s）" % [why, resume_path.get_file()])
+
+
+func _resume_music(why: String) -> void:
+	if _resume_after_focus.is_empty():
+		return
+	var path := _resume_after_focus
+	_resume_after_focus = ""
+	play(path)
+	print("[Music] %s：接回 %s" % [why, path.get_file()])
+
