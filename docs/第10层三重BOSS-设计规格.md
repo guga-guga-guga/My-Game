@@ -98,3 +98,53 @@ t=0.7  本体瞬移到落点，紫光淡出，0.3 秒后恢复行动（无敌结
 ```
 - 落点 = 玩家当前位置周围 **2 瓦片（32px）** 的随机方向
 - 瞬移冷却 6 秒（分身 9 秒）；紫光与本体光芒都用 `boss_afterimage.gdshader` 或独立材质实现
+
+## 6. 阶段 2 实施方案（精确到函数，待执行）
+
+> 阶段 1（BOSS 本体）已完成并自检通过：`scene/boss_purple.gd` / `boss_purple.tscn` /
+> `resources/shaders/boss_afterimage.gdshader`，自检 `tools/test_boss_purple.tscn` 27 项全过。
+> 下面是把 BOSS 真正接进关卡的改动。
+
+### 6.1 `scene/battle/battle.gd`
+
+1. **改 `_spawn_boss()`**（现在只刷 1 只原 BOSS）
+   - 抽出 `_spawn_one_boss(scene_path: String, family: int, config) -> Node`：
+     实例化 -> `enemy_container.add_child` -> 取第 `family` 远的红门放好 -> `setup(config, player)`
+     -> 若节点有 `family_id` 属性就赋值 -> 若是紫色 BOSS 再加进 `_boss_nodes` 数组
+   - 第 10 层（`RunState.is_final_floor()`）：调用 3 次
+     `_spawn_one_boss(BOSS_SCENE, 0, _boss_config_for_floor())` +
+     `_spawn_one_boss(PURPLE_BOSS_SCENE, 1, PurpleConfig)` +
+     `_spawn_one_boss(PURPLE_BOSS_SCENE, 2, PurpleConfig)`
+   - 第 5 层：用层数做种子 `RandomNumberGenerator`（`seed = floor * 7919`）50/50 决定刷哪只
+     （同层结果固定，进出不会变）
+   - 新增常量 `const PURPLE_BOSS_SCENE := "res://scene/boss_purple.tscn"`
+2. **存活判定**：新增 `var _boss_nodes: Array[Node] = []` 与
+   `func _living_boss_count() -> int`（`is_instance_valid` 且 `not is_dead` 计数，含分身——
+   分身由紫色 BOSS 在运行时 `get_parent().add_child()` 生成，遍历 `enemy_container` 里
+   所有带 `debug_splits_done()` 方法的节点即可拿到本体+分身）
+3. **`_check_game_result()`**：BOSS 目标分支从 `_boss_defeated` 改成
+   `if goal.get("type","") == LevelGoal.TYPE_BOSS and _living_boss_count() == 0`
+4. **血条（阶段性方案）**：`_boss_hp_ratio()` 先改成"全部 BOSS 家族合计剩余血量占比"，
+   等 6.2 的多条血条做完后替换
+5. 金币：紫色 BOSS 本体死亡给 `gold_per_boss_kill`(20)，分身给 8（在 `_spawn_one_boss` 里
+   连 `died` 信号时按 `is_clone` 区分，避免与现有 `_on_boss_defeated()` 重复加钱）
+
+### 6.2 三条家族血条 UI（新增到 `_setup_battle_hud()`）
+
+- 结构：屏幕上方水平排列 3 组 `BattleBossBar`（每组 = `TextureRect`（BOSS 一帧图，32×32）
+  + 一条红色条）。**图像在右、血条在左**（用户要求"血条右侧的空白处加 BOSS 一帧图像"）
+- 每组数据来源：`family_id` 0/1/2；该家族的合计血量 =
+  遍历场上所有 BOSS/分身按 `family_id` 汇总 `current_health`；满血基准 = 本体最大血量 × 2
+- 第 5 层只用第 1 组（1 条，标「BOSS」）；第 10 层用 3 组
+- 图像取法：`animated_sprite.sprite_frames.get_frame_texture("default", 0)`（紫色 BOSS）
+  或原 BOSS 的对应帧 -> `ImageTexture`/`AtlasTexture` 直接塞给 `TextureRect`
+- 复用现有"从左往右缩短"的缩放逻辑（`_update_time_bar()` 的写法）
+- 家族全灭 -> 该组整组隐藏
+
+### 6.3 自检（`tools/test_boss_purple.tscn` 扩展或新建 `test_boss_floor10`）
+
+- 第 5 层：连续 20 个种子跑 `_spawn_boss()` 的决策函数，统计两种 BOSS 各出现约一半；
+  同层调用两次结果一致
+- 第 10 层：场上恰好 3 只 BOSS（1 原 + 2 紫），`family_id` 分别为 0/1/2
+- 打完所有本体后，若仍有分身存活 -> 目标**未达成**；分身全清 -> 达成
+- 三条血条的合计血量与实际家族血量一致；家族全灭后该组隐藏
