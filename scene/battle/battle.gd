@@ -128,6 +128,7 @@ func _ready() -> void:
 	# ⑥ 刷怪:有波次表的关卡走波次推进；其余沿用父类的无限刷怪
 	if goal["type"] == LevelGoal.TYPE_BOSS:
 		_spawn_bosses_for_floor()
+		_setup_arena_bounds()
 		_start_boss_door_spawner()
 	elif _waves.is_empty():
 		_spawn_initial_enemies()
@@ -1093,3 +1094,33 @@ func _sync_single_boss_bar() -> void:
 			print("[Battle] 多 BOSS：已隐藏旧的单条血条与 BOSS 标题")
 	if title != null and title.visible:
 		title.visible = false
+
+
+
+## 兜底空气墙：按当前关卡尺寸在地图外侧围一圈不可见碰撞体
+## 背景：红门那格会被挖成地板，若门后没有墙体瓦片，玩家能顺红门跑出地图
+func _setup_arena_bounds() -> void:
+	var tile := float(ArenaGen.TILE_SIZE)
+	var width := float(arena_data["width"]) * tile
+	var height := float(arena_data["height"]) * tile
+	var body := StaticBody2D.new()
+	body.name = "ArenaBounds"
+	body.collision_layer = 1
+	body.collision_mask = 0
+	add_child(body)
+	var thickness := 16.0
+	_add_bound_shape(body, Vector2(width * 0.5, -thickness * 0.5), Vector2(width + thickness * 2.0, thickness))
+	_add_bound_shape(body, Vector2(width * 0.5, height + thickness * 0.5), Vector2(width + thickness * 2.0, thickness))
+	_add_bound_shape(body, Vector2(-thickness * 0.5, height * 0.5), Vector2(thickness, height + thickness * 2.0))
+	_add_bound_shape(body, Vector2(width + thickness * 0.5, height * 0.5), Vector2(thickness, height + thickness * 2.0))
+	if debug_print:
+		print("[Battle] 兜底空气墙已就位: 地图 %dx%d 格（%dx%d px）" % [int(arena_data["width"]), int(arena_data["height"]), int(width), int(height)])
+
+
+func _add_bound_shape(body: StaticBody2D, center: Vector2, size: Vector2) -> void:
+	var shape := RectangleShape2D.new()
+	shape.size = size
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	collider.position = center
+	body.add_child(collider)
