@@ -151,7 +151,6 @@ func _check_title_layout() -> void:
 		return
 	var screen := Vector2(get_viewport().get_visible_rect().size)
 	var panel := _records_panel.get_global_rect()
-	var bar := _button_bar.get_global_rect()
 	# 按钮组：横向上取"第一个按钮左边缘 ~ 最后一个按钮右边缘"，纵向取整组范围
 	var group_top := INF
 	var group_bottom := -INF
