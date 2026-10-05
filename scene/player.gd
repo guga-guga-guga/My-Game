@@ -43,7 +43,8 @@ var spiral_phase: float =0.0
 #速度，生命，无敌持续时间
 @export var move_speed: float = 120.0
 @export var max_health: int = 3
-@export var invincibility_duration: float = 1.0
+## 受伤后的无敌时长（用户要求：延长到 1.5 秒；期间免疫一切伤害并闪烁提示）
+@export var invincibility_duration: float = 1.5
 
 #玩家当前生命，由最大生命值初始化
 var current_health: int = 0
