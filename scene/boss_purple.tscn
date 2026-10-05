@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://b3xg27xxan0tt"]
+[gd_scene format=3 uid="uid://b6adh2mhqep8x"]
 
 [ext_resource type="Script" path="res://scene/boss_purple.gd" id="1_f87vc"]
 [ext_resource type="Shader" uid="uid://bmic8r1gcdgoj" path="res://scene/blink.gdshader" id="2_8u16h"]

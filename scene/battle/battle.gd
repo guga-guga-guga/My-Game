@@ -65,6 +65,7 @@ var _boss_defeated := false
 var _boss: Enemy = null
 var _boss_nodes: Array[Node] = []
 var _boss_bars: Array[Dictionary] = []
+var _multi_boss_bar_logged := false
 var _boss_title_label: Label = null
 var _debug_win_started := false
 var _ally = null
@@ -919,7 +920,7 @@ func _spawn_purple_boss(family: int) -> void:
 	if purple == null:
 		return
 	enemy_container.add_child(purple)
-	var spawn_cell: Vector2i = _farthest_spawn_cell_from(arena_data["player_spawn"])
+	var spawn_cell: Vector2i = _spawn_cell_for_family(arena_data["player_spawn"], family)
 	purple.global_position = cell_to_world(spawn_cell)
 	purple.setup(BossConfig, player)
 	if "family_id" in purple:
@@ -1027,6 +1028,7 @@ func _setup_boss_family_bars() -> void:
 
 
 func _refresh_boss_bars() -> void:
+	_sync_single_boss_bar()
 	if _boss_bars.is_empty():
 		return
 	for entry in _boss_bars:
@@ -1058,3 +1060,36 @@ func _boss_icon_texture(body: Node) -> Texture2D:
 			continue
 		return sprite.sprite_frames.get_frame_texture(names[0], 0)
 	return null
+
+
+## 取"第 index 远"的红门格：多只 BOSS 时不要全挤在同一个格子上
+func _spawn_cell_for_family(from_cell: Vector2i, index: int) -> Vector2i:
+	var doors: Array = arena_data.get("doors", [])
+	if doors.is_empty():
+		return _farthest_spawn_cell_from(from_cell)
+	var cells: Array[Vector2i] = []
+	for door in doors:
+		cells.append(door["cell"])
+	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return Vector2(a).distance_to(Vector2(from_cell)) \
+			> Vector2(b).distance_to(Vector2(from_cell)))
+	return cells[clampi(index, 0, cells.size() - 1)]
+
+
+## 第 10 层有多只 BOSS 时，隐藏原来那条单 BOSS 血条与「BOSS」标题（避免和三条家族血条重复）
+## 只做隐藏、不做恢复：单 BOSS 层和死亡后的隐藏仍由原有逻辑负责
+func _sync_single_boss_bar() -> void:
+	if _living_boss_count() <= 1:
+		return
+	var hud := get_node_or_null("Player/HUDLayer")
+	if hud == null:
+		return
+	var bar := hud.get_node_or_null("TimeBar") as Sprite2D
+	var title := hud.get_node_or_null("BossHealthTitle") as Label
+	if bar != null and bar.visible:
+		bar.visible = false
+		if not _multi_boss_bar_logged:
+			_multi_boss_bar_logged = true
+			print("[Battle] 多 BOSS：已隐藏旧的单条血条与 BOSS 标题")
+	if title != null and title.visible:
+		title.visible = false
