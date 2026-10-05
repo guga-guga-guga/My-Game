@@ -63,6 +63,8 @@ var _waves_finished := false
 var _wave_timer_left := 0.0
 var _boss_defeated := false
 var _boss: Enemy = null
+var _boss_nodes: Array[Node] = []
+var _boss_bars: Array[Dictionary] = []
 var _boss_title_label: Label = null
 var _debug_win_started := false
 var _ally = null
@@ -124,7 +126,7 @@ func _ready() -> void:
 
 	# ⑥ 刷怪:有波次表的关卡走波次推进；其余沿用父类的无限刷怪
 	if goal["type"] == LevelGoal.TYPE_BOSS:
-		_spawn_boss()
+		_spawn_bosses_for_floor()
 		_start_boss_door_spawner()
 	elif _waves.is_empty():
 		_spawn_initial_enemies()
@@ -246,6 +248,7 @@ func _setup_battle_hud() -> void:
 		RunState.gold_changed.connect(_on_hud_gold_changed)
 	_refresh_hud_gold()
 	_hud_ally_box.visible = false
+	_setup_boss_family_bars()
 
 
 func _make_hud_panel(_unused_offset: Vector2) -> PanelContainer:
@@ -415,6 +418,7 @@ func _process(delta: float) -> void:
 		_debug_win_started = true
 		_start_debug_instant_win()     # 调试：任意关卡秒胜（走完整条 结算 -> 切场景 链路）
 	_check_pause_input()
+	_refresh_boss_bars()
 	_update_waves(delta)
 	_refresh_goal_hud()
 
@@ -818,7 +822,7 @@ func _goal_state() -> Dictionary:
 		"time_left": stage_time_left,
 		"waves_done": _waves_done,
 		"waves_total": _waves.size(),
-		"boss_defeated": _boss_defeated,
+		"boss_defeated": _living_boss_count() == 0,   # 三重 BOSS：全部家族归零才算达成
 		"boss_hp_ratio": _boss_hp_ratio(),          # M3:Boss 死亡时由 Boss 置真
 	}
 
@@ -882,3 +886,175 @@ func _self_check() -> void:
 		str(_hud_icon_time.visible), str(_hud_bar.visible), _hud_bar.position.x,
 		str(_hud_bar.modulate), _hud_life.position.y])
 	print("[Battle自检] HUD第一行=%s ， HUD第二行=%s" % [_goal_label.text, _detail_label.text])
+
+# ---------------- 三重 BOSS（第 5 层 50/50 / 第 10 层 3 只 + 家族血条） ----------------
+
+const PURPLE_BOSS_SCENE := "res://scene/boss_purple.tscn"
+const BOSS_FAMILY_COUNT := 3
+const BOSS_BAR_WIDTH := 220.0
+
+
+## 第 10 层 = 原 BOSS + 2 只紫 BOSS；其它 BOSS 层 = 50/50 随机一只（层数做种子，同层不变）
+func _spawn_bosses_for_floor() -> void:
+	_boss_nodes.clear()
+	var floor_now := _context_floor()
+	if RunState.is_final_floor() or floor_now >= RunState.MAX_FLOOR:
+		_spawn_boss()
+		_spawn_purple_boss(1)
+		_spawn_purple_boss(2)
+		print("[Battle] 第 10 层：三重 BOSS（原 BOSS + 紫 BOSS x2）")
+	else:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = floor_now * 7919
+		if rng.randf() < 0.5:
+			print("[Battle] 第 %d 层 BOSS 抽到：原 BOSS" % floor_now)
+			_spawn_boss()
+		else:
+			print("[Battle] 第 %d 层 BOSS 抽到：紫色 BOSS" % floor_now)
+			_spawn_purple_boss(0)
+
+
+func _spawn_purple_boss(family: int) -> void:
+	var purple = load(PURPLE_BOSS_SCENE).instantiate()
+	if purple == null:
+		return
+	enemy_container.add_child(purple)
+	var spawn_cell: Vector2i = _farthest_spawn_cell_from(arena_data["player_spawn"])
+	purple.global_position = cell_to_world(spawn_cell)
+	purple.setup(BossConfig, player)
+	if "family_id" in purple:
+		purple.family_id = family
+	_boss_nodes.append(purple)
+	if _boss == null:
+		_boss = purple
+	if not purple.died.is_connected(_on_enemy_died):
+		purple.died.connect(_on_enemy_died)
+	purple.died.connect(_on_purple_boss_died)
+	if debug_print:
+		print("[Battle] 紫色 BOSS 已放出（家族 %d）出生格=%s" % [family, str(spawn_cell)])
+
+
+func _on_purple_boss_died() -> void:
+	if not is_inside_tree():
+		return
+	var gain := maxi(gold_per_boss_kill, 0)
+	RunState.add_gold(gain)
+	_gold_gained += gain
+	if debug_print:
+		print("[Battle] 紫色 BOSS 阵亡 金币 +%d（合计 %d）" % [gain, RunState.gold])
+
+
+## 场上所有 BOSS：原 BOSS + 紫色 BOSS 本体 + 紫色 BOSS 的分身
+func _boss_nodes_all() -> Array[Node]:
+	var nodes: Array[Node] = []
+	for child in enemy_container.get_children():
+		var node := child as Node
+		if node == null:
+			continue
+		if node == _boss or node.has_method("debug_splits_done"):
+			nodes.append(node)
+	return nodes
+
+
+## 还活着的 BOSS 数量（含分身）—— 归零才算过关
+func _living_boss_count() -> int:
+	var count := 0
+	for node in _boss_nodes_all():
+		if is_instance_valid(node) and not bool(node.get("is_dead")):
+			count += 1
+	return count
+
+
+func _node_family(node: Node) -> int:
+	var value = node.get("family_id")
+	return int(value) if value != null else 0
+
+
+## 某个家族（本体 + 它的分身）的合计血量；满血基准 = 本体最大血量 x2（本体 + 4 个 1/4 血分身）
+func _family_hp(family: int) -> Dictionary:
+	var current := 0
+	for node in _boss_nodes_all():
+		if is_instance_valid(node) and _node_family(node) == family:
+			current += int(node.get("current_health"))
+	var body := _boss_body_of_family(family)
+	var total := 1
+	if body != null:
+		total = maxi(int(body.get("max_health")) * 2, 1)
+	return {"current": current, "total": total}
+
+
+func _boss_body_of_family(family: int) -> Node:
+	for node in _boss_nodes:
+		if is_instance_valid(node) and not bool(node.get("is_clone")):
+			if _node_family(node) == family:
+				return node
+	if family == 0 and is_instance_valid(_boss):
+		return _boss
+	return null
+
+
+## 屏幕上方：每组 = 红色血条 + 右侧 BOSS 一帧图像（用户可以一眼分清三条是谁）
+func _setup_boss_family_bars() -> void:
+	var layer := get_node_or_null("BattleHud") as CanvasLayer
+	if layer == null or not _boss_bars.is_empty():
+		return
+	var row := HBoxContainer.new()
+	row.name = "BossFamilyBars"
+	row.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	row.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	row.offset_top = 14.0
+	row.add_theme_constant_override("separation", 26)
+	layer.add_child(row)
+	for family in range(BOSS_FAMILY_COUNT):
+		var group := HBoxContainer.new()
+		group.add_theme_constant_override("separation", 6)
+		group.visible = false
+		row.add_child(group)
+		var bar_bg := ColorRect.new()
+		bar_bg.color = Color(0.16, 0.06, 0.06, 0.85)
+		bar_bg.custom_minimum_size = Vector2(BOSS_BAR_WIDTH, 18.0)
+		group.add_child(bar_bg)
+		var fill := ColorRect.new()
+		fill.color = Color(1.0, 0.28, 0.28, 1.0)
+		fill.size = Vector2(BOSS_BAR_WIDTH, 18.0)
+		bar_bg.add_child(fill)
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(32.0, 32.0)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		group.add_child(icon)
+		_boss_bars.append({"group": group, "fill": fill, "icon": icon, "family": family})
+
+
+func _refresh_boss_bars() -> void:
+	if _boss_bars.is_empty():
+		return
+	for entry in _boss_bars:
+		var family: int = int(entry["family"])
+		var group := entry["group"] as Control
+		var body := _boss_body_of_family(family)
+		if body == null:
+			group.visible = false
+			continue
+		var hp := _family_hp(family)
+		var alive := int(hp["current"]) > 0
+		group.visible = alive
+		if not alive:
+			continue
+		var fill := entry["fill"] as ColorRect
+		fill.size = Vector2(BOSS_BAR_WIDTH * clampf(float(hp["current"]) / float(hp["total"]), 0.0, 1.0), 18.0)
+		var icon := entry["icon"] as TextureRect
+		if icon.texture == null:
+			icon.texture = _boss_icon_texture(body)
+
+
+func _boss_icon_texture(body: Node) -> Texture2D:
+	for path in ["AnimatedSprite2D", "AnimatedSprite", "BodySprite"]:
+		var sprite := body.get_node_or_null(path) as AnimatedSprite2D
+		if sprite == null or sprite.sprite_frames == null:
+			continue
+		var names := sprite.sprite_frames.get_animation_names()
+		if names.is_empty():
+			continue
+		return sprite.sprite_frames.get_frame_texture(names[0], 0)
+	return null
