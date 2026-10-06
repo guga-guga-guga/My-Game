@@ -175,10 +175,12 @@ func _refresh() -> void:
 		var key: String = ITEM_KEYS[index]
 		var price := RunState.shop_price(key)
 		var affordable := RunState.gold >= price
-		if key == "heal":
+		if RunState.shop_is_bought_this_floor(key):
+			affordable = false                        # 伤害/射速每层各限购 1 次
+		elif key == "heal":
 			affordable = affordable and RunState.current_health < RunState.max_health
 		elif key == "ally":
-			affordable = affordable and not RunState.ally_pending
+			affordable = affordable and RunState.ally_count() < RunState.MAX_ALLIES
 		var chosen := index == _selected
 		var name_color := Color(0.88, 0.89, 0.92)
 		var price_color := Color(1.0, 0.90, 0.60)
@@ -191,8 +193,10 @@ func _refresh() -> void:
 		_row_names[index].text = ("> " if chosen else "  ") + String(ITEM_TITLES[key])
 		_row_names[index].add_theme_color_override("font_color", name_color)
 		# 恢复血量：血满时显示"血量已满"，省得玩家以为能买
-		if key == "ally" and RunState.ally_pending:
-			_row_prices[index].text = "已雇佣"
+		if RunState.shop_is_bought_this_floor(key):
+			_row_prices[index].text = "本层已买"
+		elif key == "ally" and RunState.ally_count() > 0:
+			_row_prices[index].text = "已雇佣 %d/%d" % [RunState.ally_count(), RunState.MAX_ALLIES]
 		elif key == "heal" and RunState.current_health >= RunState.max_health:
 			_row_prices[index].text = "血量已满"
 		else:
@@ -214,11 +218,14 @@ func _activate_selected() -> void:
 		return
 	var key: String = ITEM_KEYS[_selected]
 	var price := RunState.shop_price(key)
+	if RunState.shop_is_bought_this_floor(key):
+		_message.text = "本层已经买过了"
+		return
 	if key == "heal" and RunState.current_health >= RunState.max_health:
 		_message.text = "血量已满 不用买"
 		return
-	if key == "ally" and RunState.ally_pending:
-		_message.text = "本关已经雇过队友了"
+	if key == "ally" and RunState.ally_count() >= RunState.MAX_ALLIES:
+		_message.text = "队友已经满 %d 个了" % RunState.MAX_ALLIES
 		return
 	if not RunState.shop_buy(key):
 		_message.text = "金币不够 还差 %d" % maxi(price - RunState.gold, 0)

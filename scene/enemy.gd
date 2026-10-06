@@ -15,6 +15,8 @@ const WAYPOINT_REACHED_DISTANCE := 5.0
 #本体碰撞圆比配置半径缩小的量 像素 :16px 的格子里半径 8 是零余量，
 #留出余量才能避免被物理分离反复推挤，咬在墙角
 const BODY_RADIUS_INSET := 2.0
+## 守护关：敌人冲守护对象时，玩家进入自己这么近（2 瓦片）就改追玩家
+const GUARD_PLAYER_CHECK_RANGE := 32.0
 
 ## 被"投掷"在空中：暂停 AI 与物理、关闭接触伤害、抬高绘制层级（Boss 技能用）
 var is_airborne: bool = false
@@ -35,6 +37,9 @@ enum DeathSequenceStage {
 @export var touch_damage_interval: float = 0.5
 ## 是否会把"更近的队友"也当成追击目标（Boss 关掉，只盯玩家）
 @export var chase_ally: bool = true
+
+var _guard_check_left := 0.0
+var _guard_chase_player := false
 #受击闪烁持续时间
 @export var hurt_blink_duration: float = 0.16
 
@@ -123,6 +128,18 @@ func apply_damage(amount: int) -> bool:
 
 ## 当前该追谁：玩家，或者离得更近的队友（chase_ally=false 时只追玩家）
 func _pick_chase_target() -> Node2D:
+	# 守护关：默认冲"守护对象"；每 5 秒检查一次，玩家在自己 2 瓦片内 -> 改追玩家
+	var guard := get_tree().get_first_node_in_group("guard_target") as Node2D
+	if guard != null and is_instance_valid(guard) and guard.get("is_dead") != true:
+		_guard_check_left = maxf(_guard_check_left - get_physics_process_delta_time(), 0.0)
+		if _guard_check_left <= 0.0:
+			_guard_check_left = 5.0
+			_guard_chase_player = (is_instance_valid(target_player) and not target_player.is_dead
+				and global_position.distance_to(target_player.global_position) <= GUARD_PLAYER_CHECK_RANGE)
+		if _guard_chase_player and is_instance_valid(target_player) and not target_player.is_dead:
+			return target_player
+		return guard
+
 	var best: Node2D = null
 	if is_instance_valid(target_player) and not target_player.is_dead:
 		best = target_player
@@ -450,9 +467,12 @@ func _play_death_sequence_animation(animation_name: StringName, stage: DeathSequ
 	
 	if config == null:
 		return false
-	if config.enemy_frames == null:
-		return false
-	if not config.enemy_frames.has_animation(animation_name):
+	# 必须看"当前实际显示的 SpriteFrames"，不能用 config.enemy_frames：
+	# 紫 BOSS 会把精灵换成自己的 3 帧素材，而 config.enemy_frames 仍是通用 enemy_basic
+	#（里面有 death/explode）。用 config 判断会以为能播 death，实际 play() 失败，
+	# animation_finished 永远不来，死亡流程卡死 -> 留下打不动、不消失的紫 BOSS。
+	var frames: SpriteFrames = animated_sprite.sprite_frames if animated_sprite != null else null
+	if frames == null or not frames.has_animation(animation_name):
 		return false
 	
 	animated_sprite.play(animation_name)

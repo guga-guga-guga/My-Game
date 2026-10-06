@@ -1,0 +1,23 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Texture2D" path="res://resources/texture/道具ui.png" id="1_qwydi"]
+[ext_resource type="Script" path="res://scene/enemy_bullet.gd" id="1_xw300"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_xw300"]
+atlas = ExtResource("1_qwydi")
+region = Rect2(22, 23, 4, 4)
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_m2l4i"]
+radius = 2.5
+
+[node name="EnemyBullet" type="Area2D"]
+collision_layer = 128
+collision_mask = 258
+script = ExtResource("1_xw300")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+modulate = Color(1, 0.36, 0.36, 1)
+texture = SubResource("AtlasTexture_xw300")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_m2l4i")

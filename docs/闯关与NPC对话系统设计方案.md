@@ -432,7 +432,7 @@ scene/enemy.gd         # 可选：金币掉落
 | 通过性 | `is_boss_passable()`：只在"2×2 全空"的格子上 flood fill，必须能到达每道红门内侧 → **保证半径 16 的 Boss 不会卡墙**（1 格宽 = 16px 会卡） |
 | 目标 | **只有一条**：击败 Boss（无时限、无波次）；失败只有"玩家掉完血" |
 | 出生距离 | 玩家在离红门最远的地板格；Boss 从**离玩家最远的红门**出场；新增最小距离保证 —— 实测相距 **23~26 格** |
-| 红门涌怪 | Boss 关每 `boss_door_spawn_interval = 5` 秒从红门涌出 1 只普通敌人，场上小怪（不含 Boss）上限 `boss_door_alive_cap = 5` |
+| 红门涌怪 | Boss 关每 `boss_door_spawn_interval = 5` 秒从红门涌出 `boss_door_spawn_min~max = 2~4` 只普通敌人；场上普通敌人上限 `boss_level_normal_enemy_cap = 20`（红门刷的 + BOSS 抛的，BOSS/紫 BOSS/分身不占名额）；红门自身守 20 上限；BOSS 技能 A 一次抛 4~7 只，条件是"冷却好了 且 场上普通敌人 <=19"，抛出后可临时超过 20 |
 
 ### 12.2 Boss 技能（`scene/boss.gd`，extends `enemy.gd`）
 | 阶段 | 阈值 | 行为 |

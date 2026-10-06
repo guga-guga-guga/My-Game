@@ -1,6 +1,9 @@
 extends CharacterBody2D
 class_name Player
 
+## 玩家满血时捡到回血道具：请求战斗把这次回血转给队友（A->B->C，都满则不加）
+signal heal_ally_requested
+
 const NORMAL_ANIMATION_PREFIX := &"normal"
 
 const BULLET_SCENE := preload("res://scene/bullet.tscn")
@@ -157,6 +160,16 @@ func _try_shoot(shoot_input: Vector2) -> void:
 func apply_pickup(config: PickupConfig) -> bool:
 	if config == null:
 		return false
+	# 恢复道具：回 1 颗心；满血也照样消耗（用户要求）
+	if config.pickup_type == PickupConfig.PickupType.HEAL:
+		if current_health < max_health:
+			current_health = mini(current_health + 1, max_health)
+		else:
+			# 玩家满血：这次回血转给队友（战斗里按 A->B->C 找第一个没满血的队友；
+			# 队友也都满血则谁都不加）。道具照样消耗（沿用原来的规则）。
+			heal_ally_requested.emit()
+		_play_sfx(pickup_sfx_player)
+		return true
 	
 	var applied := false
 	var should_refresh_shooting_timer := false 

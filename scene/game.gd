@@ -7,6 +7,8 @@ const RESULT_MESSAGE_LOSE := "玩家生命值已归零"
 const RESULT_OK_BUTTON_TEXT := "返回标题"
 #结算后回到开始界面，而不是直接退出游戏
 const TITLE_SCENE_PATH := "res://scene/title.tscn"
+## ESC 暂停菜单（经典模式 / 闯关关卡共用）
+const PauseMenuScript = preload("res://scene/ui/pause_menu.gd")
 
 
 #默认敌人场景与四种敌人配置资源
@@ -17,6 +19,7 @@ const TITLE_SCENE_PATH := "res://scene/title.tscn"
 	preload("res://resources/config/enemy_bomber.tres"),
 	preload("res://resources/config/enemy_fast.tres"),
 	preload("res://resources/config/enemy_shelled.tres"),
+	preload("res://resources/config/enemy_shooter.tres"),
 ]
 
 
@@ -79,6 +82,8 @@ var time_bar_texture_width: float = 0.0
 var is_result_displayed: bool = false
 #本局击杀的敌人数，由敌人的 died 信号累加
 var round_kill_count: int = 0
+#ESC 暂停菜单实例（打开时暂停整棵树）
+var _pause_menu = null
 
 
 
@@ -88,6 +93,7 @@ func _ready() -> void:
 	random_generator.randomize()
 	_configure_result_dialog()
 	_setup_hud()
+	_setup_pause_menu()
 	_setup_enemy_pathfinder()
 	_collect_enemy_spawn_points()
 	_warn_spawn_points_inside_walls()
@@ -106,6 +112,7 @@ func _process(delta: float) -> void:
 	_update_spawn_interval()
 	_update_hud()
 	_check_game_result()
+	_check_pause_input()
 
 
 	
@@ -113,6 +120,15 @@ func _process(delta: float) -> void:
 func _configure_result_dialog() -> void:
 	result_dialog.dialog_close_on_escape = false
 	result_dialog.ok_button_text = RESULT_OK_BUTTON_TEXT
+	# 「确定」按钮也支持 E 键确认（用户要求）：给它挂一个物理 E 的快捷键
+	var ok_button := result_dialog.get_ok_button()
+	if ok_button != null:
+		var e_key := InputEventKey.new()
+		e_key.physical_keycode = KEY_E
+		var shortcut_events: Array[InputEvent] = [e_key]
+		var ok_shortcut := Shortcut.new()
+		ok_shortcut.events = shortcut_events
+		ok_button.shortcut = ok_shortcut
 	result_dialog.hide()
 	
 	if not result_dialog.confirmed.is_connected(_on_result_dialog_exit_requested):
@@ -334,7 +350,10 @@ func _try_spawn_enemy() -> bool:
 	if enemy_cfg == null:
 		return false
 	
-	var enemy_instance := enemy_scene.instantiate() as Enemy
+	var spawn_scene := enemy_scene
+	if enemy_cfg.scene_override != null:
+		spawn_scene = enemy_cfg.scene_override      # 特殊敌人用自己的场景
+	var enemy_instance := spawn_scene.instantiate() as Enemy
 	if enemy_instance == null:
 		push_warning("敌人场景实例化失败，请检查 enemy_scene 设置.")
 		return false
@@ -443,3 +462,42 @@ func _warn_spawn_points_inside_walls() -> void:
 		if problem.is_empty():
 			continue
 		push_warning("出生点 %s 位于格子 %s，%s，敌人可能一出生就卡住" % [spawn_point.name, cell, problem])
+
+
+# ---------------- ESC 暂停菜单（经典模式 / 闯关关卡共用） ----------------
+
+func _setup_pause_menu() -> void:
+	_pause_menu = PauseMenuScript.new()
+	add_child(_pause_menu)
+	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
+
+
+func _check_pause_input() -> void:
+	if _pause_menu == null or _pause_menu.is_open() or is_result_displayed:
+		return
+	# 关键：ESC 关菜单是在输入阶段处理的，同一帧的 _process 里
+	# Input.is_action_just_pressed("pause") 仍然是 true，不挡的话会立刻又被打开，
+	# 表现就是"按 ESC 暂停后再按 ESC 恢复不了"。
+	if _pause_menu.just_closed():
+		return
+	if Input.is_action_just_pressed("pause"):
+		_pause_menu.open()
+
+
+func _on_quit_to_title_requested() -> void:
+	print("[Pause] 回到主界面（放弃本局，不留战绩）")
+	GameFlow.goto_title()
+
+
+## 切出窗口（Alt+Tab / 点别的窗口）自动暂停，免得在后台被打死
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_auto_pause_on_focus_lost()
+
+
+func _auto_pause_on_focus_lost() -> void:
+	if not is_inside_tree():
+		return
+	if _pause_menu == null or _pause_menu.is_open() or is_result_displayed:
+		return
+	_pause_menu.open()
