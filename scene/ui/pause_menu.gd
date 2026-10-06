@@ -16,6 +16,8 @@ var _rows: Array[Label] = []
 var _selected := 0
 var _open := false
 var _open_frame := -1
+var _close_frame := -1
+var _close_msec := -10000
 
 
 func is_open() -> bool:
@@ -102,6 +104,8 @@ func _close(quit_to_title: bool) -> void:
 	if not _open:
 		return
 	_open = false
+	_close_frame = Engine.get_process_frames()   # 供战斗层判断"刚被 ESC 关掉"
+	_close_msec = Time.get_ticks_msec()
 	visible = false
 	get_tree().paused = false
 	closed.emit()
@@ -127,6 +131,16 @@ func _on_row_gui_input(event: InputEvent, index: int) -> void:
 	_selected = index
 	_refresh()
 	_confirm()
+
+
+## 是不是刚被关掉（同一帧，或 200ms 内的按键回声）——
+## 战斗层的 ESC 是 _process 轮询，挡一下才不会"关了立刻又开"
+func just_closed() -> bool:
+	if _close_frame < 0:
+		return false
+	if Engine.get_process_frames() == _close_frame:
+		return true
+	return Time.get_ticks_msec() - _close_msec < 200
 
 
 func _unhandled_input(event: InputEvent) -> void:

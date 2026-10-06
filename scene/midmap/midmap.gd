@@ -38,6 +38,7 @@ const KIND_COLORS := {
 	"elite": Color(0.72, 0.45, 1.0),       # 精英关：染紫
 	"shop": Color(1.0, 0.95, 0.55),        # 商店：偏金光（图形用玩家形象）
 	"boss": Color(1.0, 0.42, 0.38),        # BOSS 关：染红（图形用精英关那一排）
+	"defend": Color(0.55, 0.80, 1.0),      # 守护关：淡蓝（图形用 W.png 第 5 排）
 }
 
 var arena_data: Dictionary = {}
@@ -66,7 +67,7 @@ func _ready() -> void:
 		for _index in range(maxi(debug_start_health, 0)):
 			RunState.buy_max_health()
 		if debug_start_ally:
-			RunState.ally_pending = true
+			RunState.hire_ally()
 			print("[MidMap] 调试: 预支一个队友")
 	if debug_start_health > 0:
 		print("[MidMap] 调试: 预支生命 +%d -> 当前 %d/%d" % [
@@ -116,6 +117,7 @@ func _spawn_npcs() -> void:
 	var battle_frames: SpriteFrames = _frames_from_row(0)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
 	var player_frames: SpriteFrames = _player_frames()
+	var guard_frames: SpriteFrames = _frames_from_w_row(128, 4)
 	var center := Vector2i(int(floor(float(arena_data["width"]) / 2.0)), int(floor(float(arena_data["height"]) / 2.0)))
 	for index in range(SLOT_OFFSETS.size()):
 		var kind: String = kinds[index]      # 顺序固定：精英 / 普通 / 商店
@@ -127,6 +129,8 @@ func _spawn_npcs() -> void:
 			use_frames = battle_frames
 		elif kind == "elite" or kind == "boss":
 			use_frames = elite_frames       # BOSS 也用精英那排图，靠颜色区分
+		elif kind == "defend":
+			use_frames = guard_frames       # 守护关：W.png 第 5 排
 		var title := _npc_title(kind)
 		add_child(npc)
 		npc.global_position = _cell_center(cell)
@@ -159,6 +163,23 @@ func _build_midmap_arena(w: int, h: int) -> Dictionary:
 
 
 ## 从 源石虫.png 的某一横排裁出一个 3 帧动画（每帧 32x32）
+## W.png 某一排的 N 帧（32x32），守护关角色用
+func _frames_from_w_row(row_y: int, frame_count: int) -> SpriteFrames:
+	var atlas := load("res://resources/texture/W.png") as Texture2D
+	if atlas == null:
+		return null
+	var frames := SpriteFrames.new()
+	frames.clear("default")
+	for index in range(frame_count):
+		var frame := AtlasTexture.new()
+		frame.atlas = atlas
+		frame.region = Rect2(index * 32, row_y, 32, 32)
+		frames.add_frame("default", frame)
+	frames.set_animation_speed("default", 4.0)
+	frames.set_animation_loop("default", true)
+	return frames
+
+
 func _frames_from_row(row_y: int) -> SpriteFrames:
 	var atlas := load("res://resources/texture/源石虫.png") as Texture2D
 	if atlas == null:

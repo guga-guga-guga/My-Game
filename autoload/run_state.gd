@@ -18,6 +18,7 @@ const BOSS_FLOORS: Array[int] = [5, 10]
 const BASE_MAX_HEALTH := 3
 const BASE_MOVE_SPEED := 120.0
 const BASE_FIRE_INTERVAL := 0.18
+const BASE_INVINCIBILITY := 1.5      ## 玩家基础无敌时间（秒）；bonus_invincibility 叠在它上面
 
 var is_active: bool = false          ## 是否处于一局进行中
 var cleared: bool = false            ## 本局是否已通关
@@ -25,6 +26,8 @@ var floor_index: int = 1             ## 当前层 从 1 开始
 var gold: int = 0                    ## 金币 唯一来源:敌人掉落 
 var total_kills: int = 0             ## 本局累计击杀
 var run_elapsed: float = 0.0         ## 本局累计用时 秒 
+## 每局随机种子：中间地图 每层的关卡种类由它 + 层数决定（同局同层固定，换局就变）
+var run_seed: int = 0
 
 # ---- 长效升级 M5 商店写入，Battle 开场读取 ----
 # ---- 局内成长（中间地图 商店写入，Battle 开场读取；新开一局重置）----
@@ -62,6 +65,7 @@ func reset() -> void:
 	gold = 0
 	total_kills = 0
 	run_elapsed = 0.0
+	run_seed = randi()                   # 每局重新随机：中间地图 的关卡种类换局就变
 	max_health = BASE_MAX_HEALTH
 	current_health = BASE_MAX_HEALTH
 	player_damage = 1
@@ -73,8 +77,9 @@ func reset() -> void:
 	bonus_invincibility = 0.0
 	route.clear()
 	shop_buy_count.clear()
+	shop_bought_this_floor.clear()
 	last_level_report.clear()
-	ally_pending = false
+	ally_roster.clear()
 	_record_written = false
 	run_started.emit()
 	floor_changed.emit(floor_index)
@@ -101,6 +106,7 @@ func try_spend_gold(amount: int) -> bool:
 ## 前进一层；已在最终层时保持在最终层（避免打赢最终层的精英关后层数溢出）
 func advance_floor() -> void:
 	floor_index = mini(floor_index + 1, MAX_FLOOR)
+	shop_bought_this_floor.clear()   # 换层 -> 新一层的商店重置"每层限购一次"的强化
 	floor_changed.emit(floor_index)
 
 
@@ -119,6 +125,8 @@ func kind_title(kind: String) -> String:
 			return "商店"
 		"boss":
 			return "BOSS"
+		"defend":
+			return "守护关"
 	return kind
 
 
@@ -138,8 +146,10 @@ func midmap_kinds(index: int = -1) -> Array[String]:
 		kinds = ["shop", "boss", "shop"]
 		return kinds
 	var rng := RandomNumberGenerator.new()
-	rng.seed = target_floor * 104729
+	rng.seed = run_seed + target_floor * 104729   # 加上每局随机种子：换局换种子 -> 组合就变
 	var pool: Array[String] = ["elite", "battle", "shop"]
+	if target_floor > 5:
+		pool.append("defend")          # 守护关：第 5 层之后才会出现（用户要求）
 	for _slot in range(3):
 		kinds.append(pool[rng.randi_range(0, pool.size() - 1)])
 	if not kinds.has("battle"):
@@ -181,6 +191,11 @@ func buy_damage() -> void:
 	player_damage += 1
 
 
+## 玩家实际无敌时间（基础 + 加成），调试面板用
+func get_player_invincibility() -> float:
+	return maxf(BASE_INVINCIBILITY + bonus_invincibility, 0.0)
+
+
 func get_player_move_speed() -> float:
 	return BASE_MOVE_SPEED * move_speed_multiplier
 
@@ -207,8 +222,54 @@ const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
 ## 本局各商品已买次数 key -> int 
 var shop_buy_count: Dictionary = {}
 
-## 是否已经雇了队友（进关卡时消耗掉，只在本关生效）
-var ally_pending: bool = false
+## 每层商店限购一次的强化（用户要求：伤害提升 / 射速提升 每层各只能买一次）
+const SHOP_ONCE_PER_FLOOR: Array[String] = ["fire_rate", "damage"]
+## 本层已经买过的强化 key -> bool（换层 / 新开一局时清空）
+var shop_bought_this_floor: Dictionary = {}
+
+
+## 这个强化本层商店是不是已经买过了
+func shop_is_bought_this_floor(key: String) -> bool:
+	return bool(shop_bought_this_floor.get(key, false))
+
+## 最多同时拥有 3 名队友（用户要求）
+const MAX_ALLIES := 3
+## 一名队友能在场上存在几层（用户要求：存在 3 层）
+const ALLY_FLOORS := 3
+const ALLY_MAX_HEALTH := 3
+## 队友名册：每个元素 {"health": int, "floors_left": int}，最多 MAX_ALLIES 个。
+## 血量跨层保留；阵亡（血量<=0）或层数用完就从名册移除。
+var ally_roster: Array = []
+
+
+func ally_count() -> int:
+	return ally_roster.size()
+
+
+## 雇一个队友（名册已满返回 false）
+func hire_ally() -> bool:
+	if ally_roster.size() >= MAX_ALLIES:
+		return false
+	ally_roster.append({"health": ALLY_MAX_HEALTH, "floors_left": ALLY_FLOORS})
+	return true
+
+
+## 一层结束时更新名册：写回存活队友血量、层数 -1、清掉阵亡/到期的。
+## healths[i] = 名册第 i 个队友本关结束时的血量（0 或负数 = 阵亡）。
+func finish_ally_floor(healths: Array) -> void:
+	var kept: Array = []
+	for index in range(ally_roster.size()):
+		var entry: Dictionary = ally_roster[index]
+		var health: int = int(entry.get("health", ALLY_MAX_HEALTH))
+		if index < healths.size():
+			health = maxi(int(healths[index]), 0)
+			if health <= 0:
+				continue                          # 本关阵亡 -> 直接移除
+		entry["health"] = health
+		entry["floors_left"] = int(entry.get("floors_left", ALLY_FLOORS)) - 1
+		if int(entry["floors_left"]) > 0:
+			kept.append(entry)
+	ally_roster = kept
 
 
 ## 当前价格 = 初始价 + 初始价的一半 * 已买次数
@@ -234,12 +295,12 @@ func shop_price(key: String) -> int:
 ## 买一件：钱不够返回 false（不扣钱也不加属性）
 func shop_buy(key: String) -> bool:
 	if key == "ally":
-		# 雇佣队友：每关最多 1 个（已经雇过就等这关打完）
-		if ally_pending:
+		# 雇佣队友：最多 3 个（用户要求）
+		if ally_roster.size() >= MAX_ALLIES:
 			return false
 		if not try_spend_gold(SHOP_PRICE_ALLY):
 			return false
-		ally_pending = true
+		hire_ally()
 		return true
 	if key == "heal":
 		# 恢复血量：血满不让买（省得白花钱），买了直接回满
@@ -247,11 +308,13 @@ func shop_buy(key: String) -> bool:
 			return false
 		if not try_spend_gold(SHOP_PRICE_HEAL):
 			return false
-		current_health = max_health
+		current_health = mini(current_health + 1, max_health)   # 用户要求：一次只回一颗心
 		health_changed.emit(current_health, max_health)
 		return true
 	if not SHOP_KEYS.has(key):
 		return false
+	if SHOP_ONCE_PER_FLOOR.has(key) and shop_is_bought_this_floor(key):
+		return false                                  # 伤害/射速每层各限买 1 次
 	if not try_spend_gold(shop_price(key)):
 		return false
 	match key:
@@ -262,6 +325,8 @@ func shop_buy(key: String) -> bool:
 		"damage":
 			buy_damage()
 	shop_buy_count[key] = int(shop_buy_count.get(key, 0)) + 1
+	if SHOP_ONCE_PER_FLOOR.has(key):
+		shop_bought_this_floor[key] = true
 	return true
 
 

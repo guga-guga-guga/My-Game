@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="PickupConfig" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://resources/config/pickup_config.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://resources/atlas/pickup_heal.tres" id="2_icon"]
+
+[resource]
+script = ExtResource("1_script")
+pickup_type = 3
+display_name = "恢复道具"
+drop_weight = 1.0
+icon_texture = ExtResource("2_icon")
+duration = 0.0

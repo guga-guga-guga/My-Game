@@ -5,6 +5,7 @@ enum PickupType{
 	SPEED,
 	RAPID,
 	SPIRAL,
+	HEAL,     ## 恢复道具：吃到回 1 颗心（玩家/队友各自回自己）
 }
 
 enum PlayerFormMode{

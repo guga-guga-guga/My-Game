@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="EnemyConfig" load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://resources/config/enemy_config.gd" id="1_script"]
+[ext_resource type="Script" path="res://resources/config/pickup_config.gd" id="2_pickup"]
+[ext_resource type="Resource" path="res://resources/config/pickup_rapid.tres" id="3_rapid"]
+[ext_resource type="Resource" path="res://resources/config/pickup_heal.tres" id="4_heal"]
+[ext_resource type="PackedScene" path="res://scene/enemy_shooter.tscn" id="5_scene"]
+
+[resource]
+script = ExtResource("1_script")
+enemy_type = 0
+display_name = "黑影射手"
+max_health = 3
+move_speed = 22.0
+collision_radius = 6.0
+scene_override = ExtResource("5_scene")
+pickup_drop_chance = 0.3
+pickup_drop_configs = Array[ExtResource("2_pickup")]([ExtResource("3_rapid"), ExtResource("4_heal")])

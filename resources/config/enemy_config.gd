@@ -25,6 +25,11 @@ enum EnemyType{
 
 
 
+@export_group("刷怪")
+#不为空时，刷怪用这个场景代替默认 enemy_scene（特殊外观/AI 的敌人用）
+@export var scene_override: PackedScene
+
+
 @export_group("动画资源")
 #敌人本体使用的 SpriteFranmes 资源
 @export var enemy_frames: SpriteFrames

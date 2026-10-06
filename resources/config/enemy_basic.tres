@@ -5,11 +5,12 @@
 [ext_resource type="Resource" uid="uid://bqm81rsnqj74v" path="res://resources/config/pickup_speed.tres" id="3_ca4gr"]
 [ext_resource type="Script" uid="uid://3f1enb745uiq" path="res://resources/config/enemy_config.gd" id="4_dw0wd"]
 [ext_resource type="Resource" uid="uid://d33lbasnw6reg" path="res://resources/config/pickup_rapid.tres" id="4_s5nx4"]
+[ext_resource type="Resource" path="res://resources/config/pickup_heal.tres" id="5_heal"]
 
 [resource]
 script = ExtResource("4_dw0wd")
 move_speed = 20.0
 enemy_frames = ExtResource("1_myn7r")
-pickup_drop_chance = 0.2
-pickup_drop_configs = Array[ExtResource("2_myn7r")]([ExtResource("3_ca4gr"), ExtResource("4_s5nx4")])
+pickup_drop_chance = 0.4
+pickup_drop_configs = Array[ExtResource("2_myn7r")]([ExtResource("3_ca4gr"), ExtResource("4_s5nx4"), ExtResource("5_heal")])
 metadata/_custom_type_script = "uid://3f1enb745uiq"

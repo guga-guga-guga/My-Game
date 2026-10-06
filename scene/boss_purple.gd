@@ -3,10 +3,10 @@ extends "res://scene/enemy.gd"
 ## 素材：源石虫.png 第 3 排（y=64）紫色敌人，3 帧 32×32，**体型 2 倍**
 ##
 ## 三个技能（用户确认）：
-##   瞬移  本体被紫光覆盖 0.7 秒（期间无敌）-> 落到玩家周围 2 瓦片（32px）的随机方向；
+##   瞬移  本体被紫光覆盖 0.7 秒（期间无敌）-> 落到玩家周围 5 瓦片（80px）的随机方向；
 ##         落地前 0.4 秒在落点亮起紫色光柱预告（纯视觉，不造成伤害）
-##   分裂  每掉总血量 1/4 分裂一个分身（75%/50%/25%/10% 四个阈值，最多 4 个）；
-##         分身血量 = 本体最大血量 ×0.25，**不能再分裂**，继承 family_id（血条按家族汇总）
+##   分裂  由 battle 按"紫色阵营共享血条"的 75%/50%/25% 统一触发，各加 1 个（共 3 个）；
+##         分身血量 = 本体最大血量 ×0.25，由存活的紫本体处生成，**不能再分裂**
 ##   加速  短时间移速 ×2（3 秒），移动时每 0.06 秒留下一个紫色残影（着色器淡出）
 
 const AfterimageShader := preload("res://resources/shaders/boss_afterimage.gdshader")
@@ -20,7 +20,7 @@ const TELEPORT_CHARGE := 0.7          ## 紫光覆盖时长（期间无敌）
 const TELEPORT_FLASH_LEAD := 0.4      ## 落地前多久在落点点亮紫光
 const TELEPORT_RECOVER := 0.3         ## 落地后僵直
 const TELEPORT_CD := 6.0              ## 本体冷却（分身 9 秒）
-const TELEPORT_DISTANCE_TILES := 2.0  ## 落点距玩家 2 瓦片
+const TELEPORT_DISTANCE_TILES := 5.0  ## 落点距玩家 5 瓦片（16px/瓦片 -> 80px；原来 2 瓦片太超模）
 
 const SPEED_MULTIPLIER := 2.0
 const SPEED_DURATION := 3.0
@@ -28,8 +28,6 @@ const SPEED_CD := 8.0
 const AFTERIMAGE_INTERVAL := 0.06
 const AFTERIMAGE_LIFE := 0.45
 
-const MAX_SPLITS := 4
-const SPLIT_THRESHOLDS: Array[float] = [0.75, 0.50, 0.25, 0.10]
 const SPLIT_HP_RATIO := 0.25          ## 分身血量 = 本体最大血量 ×0.25
 
 signal clone_spawned(clone: Node)
@@ -53,6 +51,7 @@ var _splits_done := 0
 
 func _ready() -> void:
 	super._ready()
+	add_to_group("boss_enemy")   # 紫 BOSS（含分身）不占"场上普通敌人"名额
 	_setup_purple_visuals()
 
 
@@ -127,7 +126,6 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_update_speed_boost(delta)
-	_try_split()
 	super._physics_process(delta)
 	_try_start_skills()
 
@@ -164,19 +162,41 @@ func _update_teleport(delta: float) -> void:
 		if animated_sprite != null:
 			animated_sprite.modulate = Color.WHITE
 		_invulnerable = false
+	# 瞬移 + 落地僵直全部结束：恢复移动与受击
+	# （之前漏了这一步：蓄力时 set_ai_suspended(true) 之后没人恢复，导致紫 BOSS 瞬移一次后永久不动）
+	if _teleport_left <= 0.0:
+		_invulnerable = false
+		if animated_sprite != null:
+			animated_sprite.modulate = Color.WHITE
+		set_ai_suspended(false)
 
 
-## 落点：玩家周围 2 瓦片，随机方向；被墙挡住就换个方向（最多试 8 次）
+## 落点：玩家周围 5 瓦片，随机方向；落点本身和"玩家到落点之间"都不能有墙
+## 只检查落点会漏掉"落点在地图外"的情况（空气墙在两者之间），所以再加一条射线检查
 func _pick_teleport_destination() -> Vector2:
 	var tile := float(TILE_SIZE)
 	var base := target_player.global_position
 	var start_angle := randf() * TAU
-	for index in range(8):
-		var angle := start_angle + TAU * float(index) / 8.0
+	for index in range(16):
+		var angle := start_angle + TAU * float(index) / 16.0
 		var candidate := base + Vector2(cos(angle), sin(angle)) * (TELEPORT_DISTANCE_TILES * tile)
-		if not _is_blocked_point(candidate):
-			return candidate
-	return base
+		if _is_blocked_point(candidate):
+			continue
+		if _has_wall_between(base, candidate):
+			continue
+		return candidate
+	# 所有方向都不合法：原地不动，绝不瞬到玩家身上或地图外
+	return global_position
+
+
+## 玩家 -> 落点 这条线是否穿墙（含地图外圈空气墙）
+func _has_wall_between(from: Vector2, to: Vector2) -> bool:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return false
+	var query := PhysicsRayQueryParameters2D.create(from, to, 1)   # mask=1 World 层
+	query.collide_with_areas = false
+	return not space.intersect_ray(query).is_empty()
 
 
 func _is_blocked_point(point: Vector2) -> bool:
@@ -259,8 +279,16 @@ func _build_light_texture() -> Texture2D:
 
 
 ## 让特效在 life 秒内把 fade 从 0 推到 1，然后销毁
+## 关键：tween 必须挂在 SceneTree 上（不能用 create_tween() 绑在本 BOSS 节点上），
+## 否则 BOSS 一死被 queue_free()，tween 被一起杀掉，残影/落点紫光就永远留在场上
 func _fade_out(sprite: Sprite2D, life: float) -> void:
-	var tween := create_tween()
+	if sprite == null or not is_instance_valid(sprite):
+		return
+	var tree := get_tree()
+	if tree == null:
+		sprite.queue_free()
+		return
+	var tween := tree.create_tween()
 	tween.tween_method(func(value: float): 
 		if is_instance_valid(sprite) and sprite.material is ShaderMaterial:
 			(sprite.material as ShaderMaterial).set_shader_parameter("fade", value)
@@ -270,14 +298,10 @@ func _fade_out(sprite: Sprite2D, life: float) -> void:
 			sprite.queue_free())
 
 
-## 每掉 1/4 总血分裂一个分身
-func _try_split() -> void:
-	if not can_split or config == null or _splits_done >= MAX_SPLITS:
-		return
-	var max_hp := maxf(float(config.max_health), 1.0)
-	var ratio := float(current_health) / max_hp
-	var threshold: float = float(SPLIT_THRESHOLDS[_splits_done])
-	if ratio > threshold:
+## 分裂由 battle 按"紫色阵营共享血条"的 75%/50%/25% 统一触发后调用这里
+## （不再由每只本体按自己的血量各自分裂）
+func spawn_clone_now() -> void:
+	if is_dead:
 		return
 	_splits_done += 1
 	_spawn_clone()
@@ -292,11 +316,27 @@ func _spawn_clone() -> void:
 	clone.is_clone = true
 	clone.can_split = false
 	clone.family_id = family_id
-	clone.global_position = global_position + Vector2(randf_range(-40, 40), randf_range(-40, 40))
-	clone.setup(config, target_player)
+	clone.global_position = _pick_clone_spawn_position()
+	# config 在 _setup_purple_visuals() 里已经被翻倍过一次，直接给分身会让它再翻一倍
+	# （碰撞半径 16 -> 32，直径 4 格，会卡在窄道里不动）。这里先还原再交给分身。
+	var clone_config = config
+	if config != null:
+		clone_config = config.duplicate()
+		clone_config.collision_radius = float(config.collision_radius) / BODY_SCALE
+		clone_config.explosion_radius = float(config.explosion_radius) / BODY_SCALE
+	clone.setup(clone_config, target_player)
 	clone.current_health = maxi(int(float(config.max_health) * SPLIT_HP_RATIO), 1)
 	clone_spawned.emit(clone)
 	print("[紫BOSS] 分裂出分身（第 %d 个，血量 %d/%d）" % [_splits_done, clone.current_health, config.max_health])
+
+
+## 分身出生点：本体附近随机偏移，但必须在可站立的地板上（否则会卡进墙里不动）
+func _pick_clone_spawn_position() -> Vector2:
+	for _i in range(12):
+		var candidate := global_position + Vector2(randf_range(-40.0, 40.0), randf_range(-40.0, 40.0))
+		if not _is_blocked_point(candidate):
+			return candidate
+	return global_position
 
 
 # ---------------- 供 headless 自检调用 ----------------

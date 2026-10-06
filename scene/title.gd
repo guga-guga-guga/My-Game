@@ -29,6 +29,8 @@ const CUSTOM_FONT: Font = null
 
 var _records_panel: PanelContainer = null
 var _button_bar: VBoxContainer = null
+## 标题页按钮列表：支持 W/S 上下选择 + E 确认（用户要求）
+var _buttons: Array[Button] = []
 
 const TITLE_TEXT := "唯时代尔"
 ## 标题下面的说明：只留操作说明（"撑满倒计时即通关…"那句按用户要求去掉了）
@@ -100,12 +102,6 @@ func _build_ui() -> void:
 	start_button.pressed.connect(_on_start_button_pressed)
 	_button_bar.add_child(start_button)
 
-	# 调试入口只在调试构建里出现（发布版看不到）
-	if OS.is_debug_build():
-		var ally_debug_button := _make_button("调试: 队友关卡", "DebugAllyButton")
-		ally_debug_button.pressed.connect(_on_debug_ally_pressed)
-		_button_bar.add_child(ally_debug_button)
-
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
 	_button_bar.add_child(quit_button)
@@ -113,9 +109,50 @@ func _build_ui() -> void:
 	# ---- 右侧靠下:最近战绩 ----
 	_build_records_panel()
 
+	# 收集按钮，供 W/S + E 的键盘操作使用
+	_buttons.clear()
+	for child in _button_bar.get_children():
+		if child is Button:
+			_buttons.append(child)
+
 	#让键盘 / 手柄也能直接开始:内置动作 ui_accept 回车，空格 会触发当前聚焦的按钮
 	run_button.grab_focus()
 	_check_title_layout.call_deferred()
+
+
+## 标题页键盘操作:W/S(或上下方向键)切换按钮，E 确认（用户要求）
+## 注意：调试入口已搬到 F1 面板（DebugPanel），标题这边不再有调试按钮
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("move_up") or event.is_action_pressed("ui_up"):
+		_move_button_focus(-1)
+	elif event.is_action_pressed("move_down") or event.is_action_pressed("ui_down"):
+		_move_button_focus(1)
+	elif event.is_action_pressed("interact"):
+		_activate_focused_button()
+	else:
+		return
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_input_as_handled()
+
+
+func _move_button_focus(step: int) -> void:
+	if _buttons.is_empty():
+		return
+	var index := 0
+	for i in range(_buttons.size()):
+		if _buttons[i].has_focus():
+			index = i
+			break
+	index = wrapi(index + step, 0, _buttons.size())
+	_buttons[index].grab_focus()
+
+
+func _activate_focused_button() -> void:
+	for button in _buttons:
+		if button.has_focus():
+			button.pressed.emit()
+			return
 
 
 
@@ -309,16 +346,6 @@ func _on_start_run_button_pressed() -> void:
 	SfxPlayer.ui_click()
 	GameFlow.start_new_run()
 
-## 调试：第 1 层普通关（随机场地）+ 固定一只队友，用来试队友 AI
-## 只做准备、不切场景（自检要能单独调它，不然会把测试自己的场景顶掉）
-func _prepare_ally_debug_level() -> Dictionary:
-	RunState.reset()
-	RunState.floor_index = 1
-	RunState.ally_pending = true
-	return {"floor": 1, "node_type": "battle"}
 
-
-func _on_debug_ally_pressed() -> void:
-	var context := _prepare_ally_debug_level()
-	print("[Title] 调试: 进队友关卡（第 1 层普通关 + 1 只队友）")
-	GameFlow.start_battle(context)
+## 说明：调试关卡入口（队友关 / 第 5 层 BOSS / 第 10 层三重 BOSS）
+## 已从标题页按钮搬到 F1 调试面板，见 scene/ui/debug_panel.gd::debug_start_level()

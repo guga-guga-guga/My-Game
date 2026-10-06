@@ -2,7 +2,7 @@ extends "res://scene/enemy.gd"
 ## Boss（M3）—— 三阶段 + 三个技能，复用 enemy.gd 的寻路 / 受击 / 爆炸 / 掉落。
 ##
 ## 技能（全部带 0.7 秒预警：Boss 黄闪 + 地面警示圈，给玩家反应窗口）
-##   minions  抛小怪：在 Boss 位置生成 3~5 只普通敌人（画在 Boss 之上），
+##   minions  抛小怪：在 Boss 位置生成 4~7 只普通敌人（画在 Boss 之上），
 ##                    抛物线丢到附近"可通行格"，落地后恢复 AI → 就是普通敌人
 ##   bomb     扔自爆怪：Boss 停住并**锁定玩家此刻位置** → 抛出自爆怪 → 落地立即引爆
 ##   charge   冲撞：朝锁定位置直线冲刺（P2 起解锁），撞完硬直
@@ -36,8 +36,8 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var phase_flash_duration: float = 0.5
 
 @export_group("技能参数")
-@export var minion_count_min: int = 3
-@export var minion_count_max: int = 5
+@export var minion_count_min: int = 4
+@export var minion_count_max: int = 7
 @export var throw_duration: float = 0.6
 @export var throw_height: float = 34.0
 @export var bomb_throw_duration: float = 0.75
@@ -61,8 +61,11 @@ enum State { CHASE, TELEGRAPH, CHARGE, RECOVER }
 @export var outline_width: float = 1.5
 ## 抛小怪的独立冷却（比其它技能长得多，避免场上小怪堆积 —— 用户反馈召唤太频繁）
 @export var summon_cooldown: float = 14.0
-## 场上小怪（不含 Boss）超过这个数量就不再抛
-@export var max_alive_minions: int = 6
+## 场上普通敌人上限（由 battle 按关卡设置，默认与 boss_level_normal_enemy_cap 一致）：
+## 红门刷的 + 抛出的都算，BOSS/紫 BOSS 不占名额（用户要求）。
+## 技能可用条件：场上普通敌人 <= max_alive_minions - 1（没到 20 就能抛）；
+## 抛出后可以临时超过这个上限（用户确认：先允许超，再靠玩家清场压回去）。
+@export var max_alive_minions: int = 20
 ## 调试：技能节奏加快 4 倍 + 打印技能日志（headless 自检用）
 @export var debug_fast_skills: bool = false
 ## 调试: 强制阶段(0=自动, 1~3=强制 P1~P3)
@@ -101,6 +104,7 @@ var charge_count := 0
 
 func _ready() -> void:
 	super._ready()
+	add_to_group("boss_enemy")   # BOSS 不占"场上普通敌人"名额
 	chase_ally = false        # Boss 只盯玩家，不会被队友引走
 	_setup_glow()
 	animated_sprite.scale = Vector2(sprite_scale, sprite_scale)
@@ -305,7 +309,8 @@ func _begin_skill() -> void:
 
 func _pick_skill() -> String:
 	var pool: Array[String] = []
-	# 抛小怪：独立冷却 + 场上小怪上限（避免小怪越堆越多）
+	# 抛小怪：冷却好了 + 场上普通敌人没到上限（<= max_alive_minions - 1，即 <=19）
+	# 就可以抛；抛出后允许临时超过上限（用户确认）
 	if _summon_cooldown_left <= 0.0 and _count_alive_minions() < max_alive_minions:
 		pool.append("minions")
 	if _phase >= Phase.P2:
@@ -380,7 +385,8 @@ func _execute_pending_skill() -> void:
 	_clear_telegraphs()
 
 
-## 技能 A：抛出 3~5 只普通敌人，落到附近的"可通行格"
+## 技能 A：抛出 4~7 只普通敌人，落到附近的"可通行格"（数量由 minion_count_min/max 控制）
+## 数量不压缩：冷却好了且释放时场上 <=19，就一定抛满 4~7 只（允许临时超过 20 上限）
 func _throw_minions() -> void:
 	var count := randi_range(minion_count_min, minion_count_max)
 	for index in range(count):
@@ -543,6 +549,9 @@ func _set_outline_intensity(value: float) -> void:
 func _setup_glow() -> void:
 	var glow_material := ShaderMaterial.new()
 	glow_material.shader = BossGlowShader
+	# 受击闪烁：变淡但不完全隐身（原来 glow 材质没有闪烁，BOSS 挨打完全没反馈）
+	glow_material.set_shader_parameter("hidden_ratio", 0.5)
+	glow_material.set_shader_parameter("min_alpha", 0.35)
 	animated_sprite.material = glow_material
 	_glow_material = glow_material
 	_set_flash(0.0)
@@ -573,13 +582,16 @@ func debug_summary() -> String:
 	return "phase=P%d state=%d minions=%d bombs=%d charges=%d hp=%d" % [
 		_phase + 1, _state, thrown_minions, thrown_bombs, charge_count, current_health]
 
-## 场上还活着的小怪数量（不含 Boss 自己）
+## 场上还活着的"普通敌人"数量（红门刷的 + 抛出的；不含 Boss 自己 / 紫 BOSS / 分身）
 func _count_alive_minions() -> int:
 	var parent := get_parent()
 	if parent == null:
 		return 0
 	var count := 0
 	for child in parent.get_children():
-		if child is Enemy and child != self and not (child as Enemy).is_dead:
-			count += 1
+		if child == self or not (child is Enemy) or (child as Enemy).is_dead:
+			continue
+		if child.is_in_group("boss_enemy"):
+			continue          # BOSS / 紫 BOSS 不占"普通敌人"名额（用户要求）
+		count += 1
 	return count
