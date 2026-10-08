@@ -3,6 +3,9 @@ class_name Enemy
 
 #敌人进入死亡流程时广播一次，供主场景统计本局击杀数
 signal died
+## 半血锁血：开始 / 结束（HUD 血条用它做提示特效）
+signal hp_lock_started(duration: float)
+signal hp_lock_finished
 
 const DEFAULT_BULLET_DAMAGE := 1
 const BLINK_ENABLED_SHADER_PARAMETER := &"blink_enabled"
@@ -37,6 +40,12 @@ enum DeathSequenceStage {
 @export var touch_damage_interval: float = 0.5
 ## 是否会把"更近的队友"也当成追击目标（Boss 关掉，只盯玩家）
 @export var chase_ally: bool = true
+## 半血锁血（0 = 关闭；BOSS 由各自脚本设为 10 秒）：
+## 血量首次掉到 max_health * half_hp_lock_ratio 时锁血 half_hp_lock_time 秒，
+## 期间最多只能掉到这个下限、且移速提升 half_hp_lock_speed_bonus
+@export var half_hp_lock_time: float = 0.0
+@export var half_hp_lock_ratio: float = 0.5
+@export var half_hp_lock_speed_bonus: float = 0.2
 
 var _guard_check_left := 0.0
 var _guard_chase_player := false
@@ -80,6 +89,11 @@ var touch_damage_cooldown_left: float = 0.0
 var touched_actor: Node2D = null
 #受击闪烁剩余时间
 var hurt_blink_time_left: float = 0.0
+## 关掉掉落（紫 BOSS 家族共用血条：死亡时不掉道具）
+var drop_disabled: bool = false
+# 半血锁血剩余时间 / 是否已经触发过（每只只锁一次）
+var _hp_lock_left: float = 0.0
+var _hp_lock_used: bool = false
 # 当前死亡流程所处的阶段
 var death_sequence_stage: DeathSequenceStage = DeathSequenceStage.NONE
 # 当前死亡阶段正在播放的动画名
@@ -114,6 +128,17 @@ func apply_damage(amount: int) -> bool:
 		return false
 	if  amount <= 0:
 		return false
+	# 半血锁血的伤害截断：
+	# 1) 还没触发过锁血：这一击最多把血打到"锁血下限"（半血），不会一次跨过去
+	# 2) 正在锁血：已经卡在线上就完全免伤，否则最多打到线上
+	if half_hp_lock_time > 0.0:
+		var lock_floor := _hp_lock_floor()
+		if _hp_lock_left > 0.0:
+			if current_health <= lock_floor:
+				return false
+			amount = mini(amount, current_health - lock_floor)
+		elif not _hp_lock_used and current_health > lock_floor:
+			amount = mini(amount, current_health - lock_floor)
 		
 	current_health -= amount
 	
@@ -123,8 +148,48 @@ func apply_damage(amount: int) -> bool:
 		
 	_start_hurt_blink()
 	_play_sfx(hit_sfx_player)
-	
+	_try_start_hp_lock()               # 掉到半血 -> 开始锁血
 	return true
+
+
+# ---------------- 半血锁血（默认关闭：half_hp_lock_time = 0；BOSS 打开 10 秒） ----------------
+
+## 锁血下限（血量降到这个值就锁住，不再往下掉）
+func _hp_lock_floor() -> int:
+	if config == null or half_hp_lock_time <= 0.0:
+		return 0
+	var ratio := clampf(half_hp_lock_ratio, 0.05, 0.95)
+	return maxi(int(ceil(float(config.max_health) * ratio)), 1)
+
+
+func _try_start_hp_lock() -> void:
+	if _hp_lock_used or half_hp_lock_time <= 0.0:
+		return
+	if current_health > _hp_lock_floor():
+		return
+	_hp_lock_used = true
+	_hp_lock_left = half_hp_lock_time
+	hp_lock_started.emit(half_hp_lock_time)
+	print("[%s] 半血锁血 %.1f 秒（移速 +%.0f%%）" % [
+		name, half_hp_lock_time, half_hp_lock_speed_bonus * 100.0])
+
+
+func _update_hp_lock(delta: float) -> void:
+	if _hp_lock_left <= 0.0:
+		return
+	_hp_lock_left = maxf(_hp_lock_left - delta, 0.0)
+	if _hp_lock_left <= 0.0:
+		hp_lock_finished.emit()
+		print("[%s] 锁血结束" % name)
+
+
+## 锁血剩余时间（HUD 血条特效读它）
+func hp_lock_left() -> float:
+	return _hp_lock_left
+
+
+func hp_lock_total() -> float:
+	return maxf(half_hp_lock_time, 0.001)
 
 ## 当前该追谁：玩家，或者离得更近的队友（chase_ally=false 时只追玩家）
 func _pick_chase_target() -> Node2D:
@@ -159,6 +224,7 @@ func _pick_chase_target() -> Node2D:
 func _physics_process(delta: float) -> void:
 	_update_hurt_blink(delta)
 	_update_touch_damage(delta)
+	_update_hp_lock(delta)
 	
 	if is_dead:
 		velocity = Vector2.ZERO
@@ -248,7 +314,10 @@ func _apply_explosion_radius(radius: float) -> void:
 func _get_move_speed() -> float:
 	if config == null:
 		return 0.0
-	return config.move_speed
+	var speed := float(config.move_speed)
+	if _hp_lock_left > 0.0:
+		speed *= (1.0 + half_hp_lock_speed_bonus)     # 锁血期间移速提升
+	return speed
 	
 # 根据水平移动方向更新贴图翻转，竖直移动时保留当前朝向
 func _update_facing(move_direction: Vector2) -> void:
@@ -540,6 +609,8 @@ func _try_apply_explosion_damage() -> void:
 	
 #敌人死亡时按概率掉落一个随机道具
 func _try_drop_pickup() -> void:
+	if drop_disabled:
+		return
 	if config == null:
 		return
 	if config.pickup_drop_configs.is_empty():

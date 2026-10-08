@@ -1,4 +1,6 @@
 extends "res://scene/enemy.gd"
+## 半血锁血 10 秒（用户要求）：配合 enemy.gd 的 half_hp_lock_* 参数
+const HP_LOCK_TIME := 10.0
 ## Boss（M3）—— 三阶段 + 三个技能，复用 enemy.gd 的寻路 / 受击 / 爆炸 / 掉落。
 ##
 ## 技能（全部带 0.7 秒预警：Boss 黄闪 + 地面警示圈，给玩家反应窗口）
@@ -105,6 +107,7 @@ var charge_count := 0
 func _ready() -> void:
 	super._ready()
 	add_to_group("boss_enemy")   # BOSS 不占"场上普通敌人"名额
+	half_hp_lock_time = HP_LOCK_TIME    # 半血锁血 10 秒（用户要求）
 	chase_ally = false        # Boss 只盯玩家，不会被队友引走
 	_setup_glow()
 	animated_sprite.scale = Vector2(sprite_scale, sprite_scale)

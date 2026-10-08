@@ -70,12 +70,20 @@ var _boss: Enemy = null
 var _boss_nodes: Array[Node] = []
 ## 第 10 层第二条血条（两只紫 BOSS + 它们的分身 共用一个血池）；第 5 层为 null
 var _boss_bar_extra: Sprite2D = null
+var _boss_lock_label: Label = null            ## 第一条血条右侧的锁血倒计时（9.5S）
+var _boss_lock_label_extra: Label = null      ## 第10层第二条血条用
+var _boss_lock_marker: ColorRect = null       ## 第一条血条上 50% 处的刻度线
+var _boss_lock_marker_extra: ColorRect = null
 var _boss_icon_main: Sprite2D = null
 var _boss_icon_extra: Sprite2D = null
 ## 紫色阵营（本体+分身）的血量上限总和：每只本体按 config.max_health 加，每生成一个分身按其血量加
-var _purple_total_max: float = 0.0
+var _purple_shared_max: float = 0.0       ## 紫色阵营共用血条的上限（本体之和；分身不加）
+var _purple_shared_hp: float = 0.0        ## 紫色阵营共用血条当前值
+var _purple_family_killing: bool = false  ## 正在执行"全家同时死亡"（期间不按只算金币）
 ## 紫色共享血条每掉到下一个阈值就加 1 个分身（75% / 50% / 25%，共 3 个）
 var _purple_split_stage := 0
+var _purple_family_lock_left := 0.0      ## 紫色阵营锁血剩余时间（共享血池触发）
+var _purple_family_lock_used := false
 var _debug_win_started := false
 var _ally = null                  ## 第一个队友（兼容旧代码/自检）
 var _allies: Array = []           ## 本关所有队友（最多 RunState.MAX_ALLIES）
@@ -509,6 +517,7 @@ func _process(delta: float) -> void:
 	_check_ally_switch_input()
 	_update_defend_spawn_cap()
 	_update_purple_splits()
+	_update_purple_family_lock(delta)
 	_update_waves(delta)
 	_refresh_goal_hud()
 
@@ -670,6 +679,8 @@ func debug_sync_run_values() -> void:
 ## 金币只来自敌人掉落
 func _on_enemy_died() -> void:
 	super._on_enemy_died()
+	if _purple_family_killing:
+		return                    # 紫 BOSS 家族：统一结算（第 5 层 +30 金），不按只算
 	if debug_print:
 		print("[Battle] 击杀 %d 只（本关累计）金币 %d" % [round_kill_count, RunState.gold])
 	var gain := maxi(gold_per_enemy_kill, 0)
@@ -779,7 +790,7 @@ func _prepare_boss_health_bar(clock_bar: Sprite2D) -> void:
 	if clock_bar == null:
 		return
 	clock_bar.visible = true
-	clock_bar.modulate = Color(1.0, 0.28, 0.28)
+	clock_bar.modulate = BOSS_BAR_COLOR
 	clock_bar.position.x = 0.0
 	# 居中后必须重算左边缘（父类 _setup_hud 是按原位置算的），否则条会往右跑
 	if clock_bar.centered:
@@ -787,6 +798,7 @@ func _prepare_boss_health_bar(clock_bar: Sprite2D) -> void:
 	else:
 		time_bar_left_edge_x = clock_bar.position.x
 	_setup_boss_bar_icons(clock_bar)
+	_setup_boss_lock_hud(clock_bar)
 
 
 ## 其他无时限关卡：生命值图标 + 文字整体上移到"原时间那一行"（只改纵向）
@@ -818,7 +830,10 @@ func _update_time_bar() -> void:
 		super._update_time_bar()
 		return
 	# 第一条：原 BOSS；第5层若随机到紫 BOSS，则和它的分身共用这条
+	var main_lock_left := _lock_left_of(_main_boss_body())
 	_apply_boss_bar(time_bar, _main_boss_ratio())
+	_apply_boss_lock_visual(time_bar, main_lock_left)
+	_update_boss_lock_hud(_boss_lock_label, _boss_lock_marker, main_lock_left)
 	_update_boss_bar_icon(_boss_icon_main, _main_boss_body())
 	var main_alive := _main_boss_current() > 0.0
 	time_bar.visible = main_alive
@@ -827,7 +842,10 @@ func _update_time_bar() -> void:
 	# 第二条（第10层）：两只紫 BOSS + 它们的分身 共用一个血池
 	if _boss_bar_extra != null:
 		var purple_alive := _purple_family_current() > 0.0
+		var purple_lock_left := _purple_lock_left()
 		_apply_boss_bar(_boss_bar_extra, _purple_family_ratio())
+		_apply_boss_lock_visual(_boss_bar_extra, purple_lock_left)
+		_update_boss_lock_hud(_boss_lock_label_extra, _boss_lock_marker_extra, purple_lock_left)
 		_update_boss_bar_icon(_boss_icon_extra, _purple_body())
 		_boss_bar_extra.visible = purple_alive
 		if _boss_icon_extra != null:
@@ -844,6 +862,165 @@ func _apply_boss_bar(sprite: Sprite2D, ratio: float) -> void:
 		return
 	var current_width := time_bar_texture_width * sprite.scale.x
 	sprite.position.x = time_bar_left_edge_x + (current_width * 0.5)
+
+
+## 某个 BOSS 的锁血剩余时间（没有锁血机制/已结束 -> 0）
+func _lock_left_of(node: Node) -> float:
+	if node == null or not is_instance_valid(node):
+		return 0.0
+	if not node.has_method("hp_lock_left"):
+		return 0.0
+	return float(node.call("hp_lock_left"))
+
+
+## 紫色阵营（本体 + 分身）共用一条血条，锁血也按这条共享血池算
+func purple_family_lock_active() -> bool:
+	return _purple_family_lock_left > 0.0
+
+
+## 紫色共享血条右侧倒计时读的秒数
+func _purple_lock_left() -> float:
+	return _purple_family_lock_left
+
+
+## 紫色阵营共用一份 HP：所有本体/分身的伤害都扣这一份血（用户要求）
+## 返回值 = 这次伤害是否真的生效（锁血期间 / 打不动时为 false）
+func purple_family_apply_damage(amount: int) -> bool:
+	if amount <= 0 or _purple_shared_max <= 0.0 or _purple_shared_hp <= 0.0:
+		return false
+	if _purple_family_lock_left > 0.0:
+		return false                                   # 全家锁血中：伤害无效
+	var deal := amount
+	if not _purple_family_lock_used:
+		# 会把共享血条打到 50% 以下的那一击：截断到刚好 50%（避免一发放倒）
+		var floor_hp := _purple_shared_max * PURPLE_LOCK_RATIO
+		if _purple_shared_hp > floor_hp:
+			deal = mini(deal, int(ceil(_purple_shared_hp - floor_hp)))
+	if deal <= 0:
+		return false
+	_purple_shared_hp = maxf(_purple_shared_hp - float(deal), 0.0)
+	if not _purple_family_lock_used and _purple_shared_hp <= _purple_shared_max * PURPLE_LOCK_RATIO:
+		_start_purple_family_lock()
+	if _purple_shared_hp <= 0.0:
+		_kill_purple_family()
+	return true
+
+
+## 共用血条见底：所有本体 + 分身同时死亡、不掉道具；只在第 5 层出现时给 30 金币
+func _kill_purple_family() -> void:
+	if _purple_family_killing:
+		return
+	_purple_family_killing = true
+	var bodies := _purple_nodes()
+	for node in bodies:
+		if not is_instance_valid(node):
+			continue
+		node.set("drop_disabled", true)          # 紫 BOSS 不掉道具
+		if not bool(node.get("is_dead")):
+			node.call("_die")
+	_purple_family_killing = false
+	if _context_floor() == 5:
+		var gain := PURPLE_FLOOR5_GOLD
+		RunState.add_gold(gain)
+		_gold_gained += gain
+		if debug_print:
+			print("[Battle] 紫色 BOSS（第 5 层）阵亡：不掉道具，金币 +%d（合计 %d）" % [gain, RunState.gold])
+	else:
+		if debug_print:
+			print("[Battle] 紫色 BOSS 阵亡：不掉道具、不给金币")
+
+
+func _start_purple_family_lock() -> void:
+	if _purple_family_lock_used:
+		return
+	_purple_family_lock_used = true
+	_purple_family_lock_left = PURPLE_LOCK_TIME
+	print("[Battle] 紫 BOSS 共享血池到 50%%：全家锁血 %.0f 秒（移速 +%.0f%%）" % [
+		PURPLE_LOCK_TIME, PURPLE_LOCK_SPEED_BONUS * 100.0])
+
+
+func _update_purple_family_lock(delta: float) -> void:
+	if _purple_nodes().is_empty():
+		return
+	# 兜底：共享血池已经到 50% 但没走过伤害截断（例如分裂后重算）也要触发
+	if not _purple_family_lock_used and _purple_shared_max > 0.0:
+		if _purple_family_ratio() <= PURPLE_LOCK_RATIO:
+			_start_purple_family_lock()
+	if _purple_family_lock_left <= 0.0:
+		return
+	_purple_family_lock_left = maxf(_purple_family_lock_left - delta, 0.0)
+	if _purple_family_lock_left <= 0.0:
+		print("[Battle] 紫 BOSS 共享血池锁血结束")
+
+
+## 血条 50% 处画一条刻度线 + 右侧一个倒计时文字（9.5S），提醒"打到这就会锁血"
+func _setup_boss_lock_hud(clock_bar: Sprite2D) -> void:
+	var hud := get_node_or_null("Player/HUDLayer") as Node2D
+	if hud == null or clock_bar == null:
+		return
+	_boss_lock_marker = _make_boss_lock_marker(hud, clock_bar)
+	_boss_lock_label = _make_boss_lock_label(hud, clock_bar)
+	if _boss_bar_extra != null:
+		_boss_lock_marker_extra = _make_boss_lock_marker(hud, _boss_bar_extra)
+		_boss_lock_label_extra = _make_boss_lock_label(hud, _boss_bar_extra)
+
+
+func _make_boss_lock_marker(hud: Node2D, bar: Sprite2D) -> ColorRect:
+	var rect := ColorRect.new()
+	rect.name = "BossLockMarker"
+	rect.color = Color(1.0, 1.0, 1.0, 0.35)
+	rect.size = Vector2(BOSS_LOCK_MARKER_WIDTH, BOSS_LOCK_MARKER_HEIGHT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(rect)
+	var center_x := time_bar_left_edge_x + time_bar_texture_width * time_bar_full_scale_x * 0.5
+	rect.position = Vector2(center_x - BOSS_LOCK_MARKER_WIDTH * 0.5,
+			bar.position.y - BOSS_LOCK_MARKER_HEIGHT * 0.5)
+	return rect
+
+
+func _make_boss_lock_label(hud: Node2D, bar: Sprite2D) -> Label:
+	var label := Label.new()
+	label.name = "BossLockLabel"
+	label.add_theme_font_size_override("font_size", BOSS_LOCK_FONT_SIZE)
+	label.add_theme_color_override("font_color", BOSS_BAR_LOCK_COLOR)
+	label.add_theme_constant_override("outline_size", 4)
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.85))
+	label.visible = false
+	hud.add_child(label)
+	# 放在血条右端外侧（血条左边缘固定，右端 = 左边缘 + 满宽）
+	var right_x := time_bar_left_edge_x + time_bar_texture_width * time_bar_full_scale_x
+	label.position = Vector2(right_x + BOSS_LOCK_LABEL_GAP,
+			bar.position.y - BOSS_LOCK_FONT_SIZE * 0.75)
+	return label
+
+
+## 锁血期间：刻度线变金黄、右侧显示剩余秒数（9.5S）；没锁血时隐藏文字、刻度线变淡
+func _update_boss_lock_hud(label: Label, marker: ColorRect, lock_left: float) -> void:
+	if label != null:
+		label.visible = lock_left > 0.0
+		if lock_left > 0.0:
+			label.text = "%.1fS" % lock_left
+	if marker != null:
+		marker.color = BOSS_BAR_LOCK_COLOR if lock_left > 0.0 else Color(1.0, 1.0, 1.0, 0.35)
+
+
+## 锁血期间的血条表现：金黄色 + 呼吸闪烁（约 3Hz）；没锁血就恢复红色
+func _apply_boss_lock_visual(sprite: Sprite2D, lock_left: float) -> void:
+	if sprite == null:
+		return
+	if lock_left <= 0.0:
+		sprite.modulate = BOSS_BAR_COLOR
+		return
+	var phase := Time.get_ticks_msec() / 1000.0 * TAU * BOSS_BAR_LOCK_PULSE_HZ
+	var pulse := 0.55 + 0.45 * (0.5 + 0.5 * sin(phase))
+	sprite.modulate = Color(BOSS_BAR_LOCK_COLOR.r * pulse, BOSS_BAR_LOCK_COLOR.g * pulse,
+			BOSS_BAR_LOCK_COLOR.b * pulse, 1.0)
+
+
+## 场上所有 BOSS 里最长的"锁血剩余时间"（HUD 文字提示用；0 = 没在锁血）
+func _boss_lock_left() -> float:
+	# 注意：主 BOSS 不在 _boss_nodes 里（那只数组只装紫 BOSS），两边取最大
+	return maxf(_lock_left_of(_boss), _purple_lock_left())
 
 
 ## 血条左侧的怪物图片：第一次拿到纹理后就不再改
@@ -888,17 +1065,15 @@ func _purple_nodes() -> Array[Node]:
 	return nodes
 
 
+## 共用血条当前值（本体 + 分身同吃这一份）
 func _purple_family_current() -> float:
-	var current := 0.0
-	for node in _purple_nodes():
-		current += maxf(float(node.get("current_health")), 0.0)
-	return current
+	return _purple_shared_hp
 
 
 func _purple_family_ratio() -> float:
-	if _purple_total_max <= 0.0:
+	if _purple_shared_max <= 0.0:
 		return 0.0
-	return clampf(_purple_family_current() / _purple_total_max, 0.0, 1.0)
+	return clampf(_purple_shared_hp / _purple_shared_max, 0.0, 1.0)
 
 
 ## 显示图片用的紫色本体
@@ -911,7 +1086,7 @@ func _purple_body() -> Node:
 
 ## 紫色共享血条掉到 75% / 50% / 25% 时，各从一只存活的本体处分裂出 1 个分身（共 3 个）
 func _update_purple_splits() -> void:
-	if _purple_split_stage >= PURPLE_SPLIT_THRESHOLDS.size() or _purple_total_max <= 0.0:
+	if _purple_split_stage >= PURPLE_SPLIT_THRESHOLDS.size() or _purple_shared_max <= 0.0:
 		return
 	if _purple_family_ratio() > PURPLE_SPLIT_THRESHOLDS[_purple_split_stage]:
 		return
@@ -1166,7 +1341,22 @@ const BOSS_ICON_ATLAS := "res://resources/texture/源石虫.png"
 const NORMAL_BOSS_ICON_ROW_Y := 32    ## 原 BOSS 的血条图片用源石虫.png 第 2 排（用户指定）
 const BOSS_BAR_SPACING := 16.0        ## 第10层第二条血条相对第一条下移的世界单位（相机4倍 -> 屏幕64px）
 const BOSS_ICON_SCALE := 1.0          ## 血条左侧怪物图片的缩放（32x32 -> 32 世界单位，用户要求放大一倍）
-const BOSS_ICON_GAP := 24.0           ## 怪物图片中心到血条左边缘的距离（图片变大后同步拉远，避免压住血条）
+const BOSS_ICON_GAP := 24.0
+## BOSS 血条颜色：平时红色；半血锁血期间变金黄色 + 呼吸闪烁（提醒这段时间打不动）
+const BOSS_BAR_COLOR := Color(1.0, 0.28, 0.28)
+const BOSS_BAR_LOCK_COLOR := Color(1.0, 0.86, 0.25)
+const BOSS_BAR_LOCK_PULSE_HZ := 3.0
+## 紫色阵营共用血池：掉到 50% 时"全家"锁血 10 秒、移速 +20%（本体 + 分身算一个整体）
+const PURPLE_LOCK_TIME := 10.0
+const PURPLE_LOCK_RATIO := 0.5
+const PURPLE_LOCK_SPEED_BONUS := 0.2
+## 紫色 BOSS 在第 5 层出现时，阵亡只给这些金币（不掉道具）
+const PURPLE_FLOOR5_GOLD := 30
+## 锁血倒计时文字（放在血条右侧，格式 9.5S）/ 50% 刻度线
+const BOSS_LOCK_LABEL_GAP := 6.0
+const BOSS_LOCK_FONT_SIZE := 13
+const BOSS_LOCK_MARKER_WIDTH := 2.0
+const BOSS_LOCK_MARKER_HEIGHT := 11.0           ## 怪物图片中心到血条左边缘的距离（图片变大后同步拉远，避免压住血条）
 
 
 ## 第 10 层 = 原 BOSS + 2 只紫 BOSS；其它 BOSS 层 = 50/50 随机一只
@@ -1247,24 +1437,29 @@ func _spawn_purple_boss(family: int) -> void:
 	purple.died.connect(_on_purple_boss_died)
 	# 紫色阵营共用一个血池：本体先记一份 max，之后每生成一个分身再加它那份
 	if purple.config != null:
-		_purple_total_max += float(purple.config.max_health)
+		# 共用一份 HP：本体（第 5 层 1 只 / 第 10 层 2 只）各贡献一份血，分身不再加血
+		_purple_shared_max += float(purple.config.max_health)
+		_purple_shared_hp = _purple_shared_max
 	if purple.has_signal("clone_spawned"):
 		purple.clone_spawned.connect(_on_purple_clone_spawned)
 	if debug_print:
-		print("[Battle] 紫色 BOSS 已放出（家族 %d）出生格=%s 共享血池上限=%.0f" % [family, str(spawn_cell), _purple_total_max])
+		print("[Battle] 紫色 BOSS 已放出（家族 %d）出生格=%s 共用血条 %.0f/%.0f" % [
+			family, str(spawn_cell), _purple_shared_hp, _purple_shared_max])
 
 
 ## 紫 BOSS 分裂：分身的血量也加进共享血池的上限，这样血条不会因为分身出现而突然多一截
 func _on_purple_clone_spawned(clone: Node) -> void:
-	if is_instance_valid(clone):
-		_purple_total_max += maxf(float(clone.get("current_health")), 1.0)
-		if debug_print:
-			print("[Battle] 紫 BOSS 分身加入共享血池（上限 %.0f）" % _purple_total_max)
+	# 共用一份 HP：分身只是"多个可以被攻击的受体"，不给血条加血（用户要求）
+	if is_instance_valid(clone) and debug_print:
+		print("[Battle] 紫 BOSS 分身加入（共用血条仍为 %.0f/%.0f）" % [
+			_purple_shared_hp, _purple_shared_max])
 
 
 func _on_purple_boss_died() -> void:
 	if not is_inside_tree():
 		return
+	if _purple_family_killing:
+		return                    # 紫 BOSS 家族：金币由 _kill_purple_family 统一给
 	var gain := maxi(gold_per_boss_kill, 0)
 	RunState.add_gold(gain)
 	_gold_gained += gain
