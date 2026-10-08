@@ -305,7 +305,8 @@ func _make_ally_hud_panel(box: VBoxContainer, slot: int) -> Dictionary:
 	state_label.add_theme_color_override("font_color", Color(0.70, 0.85, 1.0))
 	right_col.add_child(state_label)
 	ally_panel.visible = false
-	return {"panel": ally_panel, "hp": hp, "state": state_label, "hint": hint}
+	# dead：本关内该队友是否已阵亡（阵亡后节点会被释放，HUD 靠这个标记继续显示"阵亡"）
+	return {"panel": ally_panel, "hp": hp, "state": state_label, "hint": hint, "dead": false}
 
 
 func _make_hud_panel(_unused_offset: Vector2) -> PanelContainer:
@@ -331,23 +332,36 @@ func _refresh_ally_hud() -> void:
 	if _hud_ally_slots.is_empty():
 		return
 	for slot in range(_hud_ally_slots.size()):
-		var panel := _hud_ally_slots[slot]["panel"] as Control
+		var entry := _hud_ally_slots[slot]
+		var panel := entry["panel"] as Control
 		if slot >= _allies.size():
 			panel.visible = false
 			continue
 		var ally = _allies[slot]
-		if ally == null or not is_instance_valid(ally):
+		var valid := ally != null and is_instance_valid(ally)
+		var dead := bool(entry.get("dead", false))
+		if valid and bool(ally.get("is_dead")):
+			dead = true
+			entry["dead"] = true
+		# 阵亡后节点被释放：仍然保留面板，显示"阵亡"（用户要求）
+		if not valid and not dead:
 			panel.visible = false
 			continue
 		panel.visible = true
-		var hp := _hud_ally_slots[slot]["hp"] as Label
-		var state_label := _hud_ally_slots[slot]["state"] as Label
-		if bool(ally.get("is_dead")):
-			hp.text = "0 / %d" % int(ally.get("MAX_HEALTH"))
-			state_label.text = "阵亡"
+		var hp := entry["hp"] as Label
+		var state_label := entry["state"] as Label
+		var hint := entry["hint"] as Label
+		var max_hp: int = int(ally.get("MAX_HEALTH")) if valid else RunState.ALLY_MAX_HEALTH
+		if dead:
+			hp.text = "0 / %d" % max_hp
+			hint.text = "阵亡"                    # 「按T切换」-> 阵亡（用户要求）
+			state_label.text = ""
+			panel.modulate = Color(1.0, 1.0, 1.0, 0.6)   # 整块压暗一点
 		else:
-			hp.text = "%d / %d" % [int(ally.get("current_health")), int(ally.get("MAX_HEALTH"))]
+			hp.text = "%d / %d" % [int(ally.get("current_health")), max_hp]
+			hint.text = "T键切换"
 			state_label.text = String(ally.call("state_name"))
+			panel.modulate = Color.WHITE
 ## 调试面板：按名册重新放一遍队友（改名册后调用）
 func debug_respawn_allies() -> void:
 	for ally in _allies:
@@ -386,6 +400,13 @@ func _on_ally_health_changed(_current: int, _maximum: int) -> void:
 	_refresh_ally_hud()
 
 
+## 队友阵亡：标记该槽位（节点随后会被释放，HUD 仍要显示"阵亡"）
+func _on_ally_died(slot: int) -> void:
+	if slot >= 0 and slot < _hud_ally_slots.size():
+		_hud_ally_slots[slot]["dead"] = true
+	_refresh_ally_hud()
+
+
 ## 商店里雇了队友的话，这一关开场把他放出来（只在本关有效）
 func _spawn_ally_if_hired() -> void:
 	_allies.clear()
@@ -408,6 +429,9 @@ func _spawn_ally_if_hired() -> void:
 			1, RunState.ALLY_MAX_HEALTH)
 		ally.health_changed.connect(_on_ally_health_changed)
 		ally.state_changed.connect(_on_ally_state_changed)
+		ally.died.connect(_on_ally_died.bind(index))          # 阵亡 -> HUD 改显示"阵亡"
+		if index < _hud_ally_slots.size():
+			_hud_ally_slots[index]["dead"] = false
 		ally.global_position = _ally_spawn_position(index)
 		_allies.append(ally)
 		if _ally == null:
