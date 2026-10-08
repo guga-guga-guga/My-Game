@@ -489,8 +489,8 @@ func apply_damage(amount: int) -> bool:
 		return false
 	if _hurt_invincibility_left > 0.0:
 		return false                      # 受击无敌中（和玩家一致）
-	current_health -= amount
-	health_changed.emit(maxi(current_health, 0), MAX_HEALTH)
+	current_health = maxi(current_health - amount, 0)   # 下限 0：不要再出现 -1
+	health_changed.emit(current_health, MAX_HEALTH)
 	_play_hit_feedback()
 	if current_health <= 0:
 		_die()
