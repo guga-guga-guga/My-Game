@@ -10,7 +10,7 @@
 [resource]
 script = ExtResource("2_script")
 display_name = "Boss"
-max_health = 120
+max_health = 150
 move_speed = 28.0
 collision_radius = 16.0
 enemy_frames = ExtResource("1_frames")

@@ -344,14 +344,27 @@ func _physics_process(delta: float) -> void:
 		return
 	if _is_ui_open():
 		return
-	# ESC：没有别的界面打开时才叫出暂停菜单（商店/对话/汇报的 ESC 优先关它们自己）
-	if Input.is_action_just_pressed("pause"):
-		_pause_menu.open()
-		return
+	# 注意：ESC 暂停已改到 _unhandled_input 处理，不能在这里轮询
+	# （否则商店/对话/汇报关掉的同一次 ESC 会在本帧又触发暂停菜单）
 	if _interact_lock <= 0.0 and Input.is_action_just_pressed("interact"):
 		var npc = _nearest_npc_in_range()
 		if npc != null:
 			_open_npc_dialogue(npc)
+
+
+## ESC：只有在没有任何其它界面（商店/对话/汇报）开着时才叫出暂停菜单。
+## 商店/对话/汇报的 ESC 在各自的 _unhandled_input 里先处理并 set_input_as_handled()，
+## 所以"关它们"的那次 ESC 不会流到这里，避免了"退出商店同时又弹暂停菜单"。
+func _unhandled_input(event: InputEvent) -> void:
+	if _pause_menu == null or _pause_menu.is_open():
+		return
+	if _is_ui_open():
+		return
+	if event.is_action_pressed("pause") or event.is_action_pressed("ui_cancel"):
+		_pause_menu.open()
+		var viewport := get_viewport()
+		if viewport != null:
+			viewport.set_input_as_handled()
 
 
 ## 取"距离玩家最近且在交互范围内"的角色（12x6 图很小，可能同时有两个在范围内）

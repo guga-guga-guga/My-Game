@@ -5,6 +5,8 @@ extends "res://scene/enemy.gd"
 ##   不会拾取道具（基类本来就没有拾取逻辑）
 
 const SHOOTER_BULLET_SCENE := preload("res://scene/enemy_bullet.tscn")
+## 持枪敌人子弹速度 = 原始 220 的 0.75 倍（用户要求）
+const SHOOTER_BULLET_SPEED := 220.0 * 0.75
 const LOCK_TIME := 5.0
 const SHOOT_INTERVAL := 2.0   ## 每 2 秒开火一次（用户要求从 5 秒改到 2 秒）
 const SHOOT_RANGE := 220.0
@@ -152,3 +154,4 @@ func _fire_at(at: Vector2) -> void:
 	parent.add_child(bullet)
 	bullet.global_position = global_position + direction * 12.0   # 出膛点贴本体边缘，别生在墙里（墙内另有兜底销毁）
 	bullet.setup(direction)
+	bullet.speed = SHOOTER_BULLET_SPEED   # 0.75 倍速

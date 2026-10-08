@@ -189,7 +189,8 @@ func _apply_floor_scaling_to_enemy_configs() -> void:
 			mul, maxi(_context_floor(), 1), "  ".join(summary)])
 
 
-## M6 平衡：最终 BOSS 更肉（半路 BOSS 保持不变）
+## BOSS 血量：基础值见 enemy_boss.tres（150）。
+## 第 5 层（半路 BOSS）用基础值；第 10 层最终 BOSS 再 ×1.65 更肉（150 -> 248）
 func _boss_config_for_floor() -> EnemyConfig:
 	if not RunState.is_final_floor():
 		return BossConfig
@@ -198,6 +199,11 @@ func _boss_config_for_floor() -> EnemyConfig:
 	if debug_print:
 		print("[Battle] 最终 BOSS 血量 %d -> %d" % [BossConfig.max_health, copy.max_health])
 	return copy
+
+
+## 紫 BOSS 血量：统一用基础值（用户要求"紫色也一起改"），不乘最终层倍率
+func _boss_config_for_purple() -> EnemyConfig:
+	return BossConfig
 
 
 ## 整局生命值变化时（例如商店买血）同步到玩家节点
@@ -1163,7 +1169,9 @@ const BOSS_ICON_SCALE := 1.0          ## 血条左侧怪物图片的缩放（32x
 const BOSS_ICON_GAP := 24.0           ## 怪物图片中心到血条左边缘的距离（图片变大后同步拉远，避免压住血条）
 
 
-## 第 10 层 = 原 BOSS + 2 只紫 BOSS；其它 BOSS 层 = 50/50 随机一只（层数做种子，同层不变）
+## 第 10 层 = 原 BOSS + 2 只紫 BOSS；其它 BOSS 层 = 50/50 随机一只
+## 用「每局随机种子 run_seed」参与：每局进同一层都可能不同（真随机 50/50），
+## 同一局内重进该层结果固定（可复现）。
 func _spawn_bosses_for_floor() -> void:
 	_boss_nodes.clear()
 	var floor_now := _context_floor()
@@ -1172,15 +1180,52 @@ func _spawn_bosses_for_floor() -> void:
 		_spawn_purple_boss(1)
 		_spawn_purple_boss(2)
 		print("[Battle] 第 10 层：三重 BOSS（原 BOSS + 紫 BOSS x2）")
+		_spawn_final_floor_shooters(4)      # 开局再放 4 个持枪敌人（用户要求）
 	else:
 		var rng := RandomNumberGenerator.new()
-		rng.seed = floor_now * 7919
+		rng.seed = RunState.run_seed + floor_now * 7919   # 加入本局随机种子：每局都可能出紫 BOSS
 		if rng.randf() < 0.5:
 			print("[Battle] 第 %d 层 BOSS 抽到：原 BOSS" % floor_now)
 			_spawn_boss()
 		else:
 			print("[Battle] 第 %d 层 BOSS 抽到：紫色 BOSS" % floor_now)
 			_spawn_purple_boss(0)
+
+
+## 第 10 层开局固定放出 count 个持枪敌人（用户要求 4 个）
+func _spawn_final_floor_shooters(count: int) -> void:
+	var cfg := _shooter_config_from_pool()
+	if cfg == null:
+		return
+	var spawned := 0
+	for _index in range(count):
+		var spawn_point := _pick_spawn_point()
+		if spawn_point == null:
+			break
+		var spawn_scene := enemy_scene
+		if cfg.scene_override != null:
+			spawn_scene = cfg.scene_override
+		var shooter := spawn_scene.instantiate() as Enemy
+		if shooter == null:
+			continue
+		enemy_container.add_child(shooter)
+		shooter.global_position = spawn_point.global_position
+		shooter.setup(cfg, player)
+		if not shooter.died.is_connected(_on_enemy_died):
+			shooter.died.connect(_on_enemy_died)
+		spawned += 1
+	if debug_print:
+		print("[Battle] 第 10 层开局放出 %d 个持枪敌人" % spawned)
+
+
+## 从刷怪池里取"持枪敌人"的配置（已按层数缩放血量）
+func _shooter_config_from_pool() -> EnemyConfig:
+	for cfg in available_enemy_configs:
+		if cfg == null or cfg.scene_override == null:
+			continue
+		if cfg.scene_override == SHOOTER_CONFIG.scene_override:
+			return cfg
+	return SHOOTER_CONFIG
 
 
 func _spawn_purple_boss(family: int) -> void:
@@ -1191,7 +1236,7 @@ func _spawn_purple_boss(family: int) -> void:
 	purple.add_to_group(BOSS_GROUP)        # 不占"普通敌人"名额
 	var spawn_cell: Vector2i = _spawn_cell_for_family(arena_data["player_spawn"], family)
 	purple.global_position = cell_to_world(spawn_cell)
-	purple.setup(BossConfig, player)
+	purple.setup(_boss_config_for_purple(), player)
 	if "family_id" in purple:
 		purple.family_id = family
 	_boss_nodes.append(purple)

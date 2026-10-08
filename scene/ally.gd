@@ -23,6 +23,9 @@ const STATE_ATTACK := "attack"
 const STATE_GUARD := "guard"
 
 const MAX_HEALTH := 3
+## 受击后的无敌时间（和玩家基础无敌一致）。没有它的话，被两三只敌人/子弹同时命中就瞬间清空 3 点血，
+## 表现成"队友只能活一层"（用户反馈的问题）
+const HURT_INVINCIBILITY := 1.5
 const FIRE_RATE_MULTIPLIER := 0.7        ## 射速打七折 -> 开火间隔 = 玩家间隔 / 0.7
 const MOVE_SPEED := 120.0
 const WAYPOINT_REACHED_DISTANCE := 10.0
@@ -65,6 +68,7 @@ signal state_changed(state: String)
 var state := STATE_ATTACK
 var current_health: int = MAX_HEALTH
 var is_dead := false
+var _hurt_invincibility_left := 0.0
 var damage := 1
 var fire_interval := 0.18
 
@@ -147,6 +151,7 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 	_update_buffs(delta)
+	_update_hurt_invincibility(delta)
 	_fire_cooldown = maxf(_fire_cooldown - delta, 0.0)
 	_goal = _pick_goal(delta)
 	_move_towards(_goal, delta)
@@ -482,13 +487,22 @@ func _update_buffs(delta: float) -> void:
 func apply_damage(amount: int) -> bool:
 	if is_dead or amount <= 0:
 		return false
+	if _hurt_invincibility_left > 0.0:
+		return false                      # 受击无敌中（和玩家一致）
 	current_health -= amount
 	health_changed.emit(maxi(current_health, 0), MAX_HEALTH)
 	_play_hit_feedback()
 	if current_health <= 0:
 		_die()
 		return true
+	_hurt_invincibility_left = HURT_INVINCIBILITY
 	return true
+
+
+func _update_hurt_invincibility(delta: float) -> void:
+	if _hurt_invincibility_left <= 0.0:
+		return
+	_hurt_invincibility_left = maxf(_hurt_invincibility_left - delta, 0.0)
 
 
 func _die() -> void:
