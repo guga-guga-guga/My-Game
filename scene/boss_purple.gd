@@ -1,4 +1,6 @@
 extends "res://scene/enemy.gd"
+## 家族锁血期间移速加成（锁血由 battle 按"紫色阵营共享血池"统一触发）
+const FAMILY_LOCK_SPEED_BONUS := 0.2
 ## 紫色 BOSS（第 5 层 50% 随机 / 第 10 层固定 2 只）
 ## 素材：源石虫.png 第 3 排（y=64）紫色敌人，3 帧 32×32，**体型 2 倍**
 ##
@@ -99,7 +101,43 @@ func _build_frames_from_row(row_y: int) -> SpriteFrames:
 func apply_damage(amount: int) -> bool:
 	if _invulnerable:
 		return false
+	# 紫色阵营（本体 + 分身）共用"同一份 HP"：伤害统一扣这份血，
+	# 扣完由 battle 让所有本体/分身同时死亡（用户要求）
+	var battle := _family_battle()
+	if battle != null and battle.has_method("purple_family_apply_damage"):
+		var applied := bool(battle.call("purple_family_apply_damage", amount))
+		if applied:
+			_start_hurt_blink()
+			_play_sfx(hit_sfx_player)
+		return applied
 	return super.apply_damage(amount)
+
+
+## 家族锁血期间移速 +20%
+func _get_move_speed() -> float:
+	var speed := super._get_move_speed()
+	if _speed_left > 0.0:
+		speed *= SPEED_MULTIPLIER            # 加速技能：移速 ×2（SPEED_MULTIPLIER 原来没被用上）
+	var battle := _family_battle()
+	if battle != null and bool(battle.call("purple_family_lock_active")):
+		speed *= (1.0 + FAMILY_LOCK_SPEED_BONUS)   # 家族锁血期间再 +20%
+	return speed
+
+
+## 家族锁血 / 共享血池都由 battle 统一管，这里拿到当前战斗场景
+func _family_battle() -> Node:
+	# 从自己往上找持有"共享血池/锁血"的战斗节点（别用 current_scene：
+	# 战斗被挂在别的节点下时会找不到，免伤就失效了）
+	var node: Node = get_parent()
+	while node != null:
+		if node.has_method("purple_family_lock_active"):
+			return node
+		node = node.get_parent()
+	if is_inside_tree() and get_tree() != null:
+		var scene := get_tree().current_scene
+		if scene != null and scene.has_method("purple_family_lock_active"):
+			return scene
+	return null
 
 
 func is_invulnerable() -> bool:
