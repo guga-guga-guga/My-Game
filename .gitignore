@@ -5,8 +5,8 @@
 # 导出产物：构建生成的 exe 不入库
 /release/
 
-# 开发过程截图（不入库）
-/docs/screenshots/
+# 文档 / 笔记 / 设计草稿 / 开发截图：整个 docs 目录都不入库（文件保留在本地）
+/docs/
 
 # harness 视觉工具产物（不入库）
 /.dsh-vision-router/
