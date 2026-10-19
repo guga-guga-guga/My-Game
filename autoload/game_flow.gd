@@ -2,12 +2,12 @@ extends Node
 ## 全局场景流程 Autoload 名:GameFlow 
 ## 所有场景切换都从这里走，避免各脚本各写 change_scene_to_file 而漏掉"复位时间缩放/暂停"
 
-const TITLE_SCENE := "res://scene/title.tscn"
-const MAP_SCENE := "res://scene/map/map_screen.tscn"          # M4 起只作调试入口保留
-const MIDMAP_SCENE := "res://scene/midmap/midmap.tscn"
+const TITLE_SCENE := "res://scene/ui/title.tscn"
+const MAP_SCENE := "res://scene/hub/map/map_screen.tscn"          # M4 起只作调试入口保留
+const MIDMAP_SCENE := "res://scene/hub/midmap/midmap.tscn"
 ## M1/M2 建好新战斗场景后这里会自动切过去；在此之前回落到现在的经典战斗场景
-const BATTLE_SCENE := "res://scene/battle/battle.tscn"
-const LEGACY_BATTLE_SCENE := "res://scene/game.tscn"
+const BATTLE_SCENE := "res://scene/levels/battle/battle.tscn"
+const LEGACY_BATTLE_SCENE := "res://scene/levels/classic/game.tscn"
 
 ## 下一场战斗的上下文 关卡目标，地图，可用敌人等 ，由 Battle 读取
 var pending_battle: Dictionary = {}

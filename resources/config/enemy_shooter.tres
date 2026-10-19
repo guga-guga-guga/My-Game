@@ -4,7 +4,7 @@
 [ext_resource type="Script" path="res://resources/config/pickup_config.gd" id="2_pickup"]
 [ext_resource type="Resource" path="res://resources/config/pickup_rapid.tres" id="3_rapid"]
 [ext_resource type="Resource" path="res://resources/config/pickup_heal.tres" id="4_heal"]
-[ext_resource type="PackedScene" path="res://scene/enemy_shooter.tscn" id="5_scene"]
+[ext_resource type="PackedScene" path="res://scene/entities/enemies/enemy_shooter.tscn" id="5_scene"]
 
 [resource]
 script = ExtResource("1_script")
