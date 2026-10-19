@@ -52,6 +52,9 @@ const DOOR_MIN_PLAYER_DIST := 5                        ## 红门离玩家出生�
 # ---- Overlay 图层 独立 TileSet:source 0 = 动态瓦片.png 的 16x32 区域 ----
 const DOOR_SOURCE := 0
 const DOOR_TILE := Vector2i(0, 0)                       ## 红门，实测平均色 #c70404
+## 房间门：动态瓦片.png 第二排那半张 16x16，4 帧循环动画（竖排烘焙成 门动画.png）
+const ROOM_DOOR_SOURCE := 1
+const ROOM_DOOR_TILE := Vector2i(0, 0)
 
 # ---- 网格取值 ----
 const CELL_FLOOR := 0
@@ -566,6 +569,10 @@ func apply_to_layers(ground: TileMapLayer, overlay: TileMapLayer, data: Dictiona
 			else:
 				# 最外圈：坚固墙壁，把整张地图完整包住（红门已经改到场地内部）
 				ground.set_cell(cell, GROUND_SOURCE, TILE_WALL_SOLID)
+	# 推车关的房间门：每格门口铺一块 16x16 动态门瓦片（第二层）
+	for room in data.get("rooms", []):
+		for door_cell in room.get("door_cells", []):
+			overlay.set_cell(door_cell, ROOM_DOOR_SOURCE, ROOM_DOOR_TILE)
 	for door in data["doors"]:
 		overlay.set_cell(door["cell"], DOOR_SOURCE, DOOR_TILE)
 		# 上下边的门开口是"横向 2 格"，而门贴图是 16x32 竖着盖 2 行 ，

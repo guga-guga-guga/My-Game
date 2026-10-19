@@ -5,6 +5,7 @@
 [ext_resource type="Texture2D" uid="uid://d252dkt0lm3n4" path="res://resources/texture/动态瓦片.png" id="2_33cqm"]
 [ext_resource type="PackedScene" uid="uid://cwcyj4ebct83d" path="res://scene/entities/player/player.tscn" id="3_33cqm"]
 [ext_resource type="Texture2D" uid="uid://ca65d27crgaol" path="res://resources/texture/道具ui.png" id="5_xlg7c"]
+[ext_resource type="Texture2D" path="res://resources/texture/门动画.png" id="9_door"]
 [ext_resource type="FontFile" uid="uid://dh6kmwb26e8g0" path="res://resources/font/IPix.ttf" id="6_qpk70"]
 [ext_resource type="AudioStream" uid="uid://cwp5a7knt47hg" path="res://resources/audio/1-28 Journey of the Prairie King (The Outlaw).mp3" id="7_17rxn"]
 [ext_resource type="AudioStream" uid="uid://bkbmrylashevh" path="res://resources/audio/Cowboy_Secret.wav" id="7_ll5lq"]
@@ -80,8 +81,20 @@ texture_region_size = Vector2i(16, 32)
 0:0/animation_frame_3/duration = 1.0
 0:0/0 = 0
 
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_door"]
+texture = ExtResource("9_door")
+texture_region_size = Vector2i(16, 16)
+0:0/animation_speed = 8.0
+0:0/animation_mode = 1
+0:0/animation_frame_0/duration = 1.0
+0:0/animation_frame_1/duration = 1.0
+0:0/animation_frame_2/duration = 1.0
+0:0/animation_frame_3/duration = 1.0
+0:0/0 = 0
+
 [sub_resource type="TileSet" id="TileSet_ll5lq"]
 sources/0 = SubResource("TileSetAtlasSource_qpk70")
+sources/1 = SubResource("TileSetAtlasSource_door")
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_xlg7c"]
 atlas = ExtResource("5_xlg7c")

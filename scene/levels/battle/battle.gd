@@ -30,6 +30,9 @@ const HUD_ICON_SIZE := 48.0
 ## 绳子场地（新模式地基）：长边 / 短边格数，只在模式跑到 rope 时才用
 @export var arena_rope_length: int = 72
 @export var arena_rope_thickness: int = 16
+## 推车关：长边 / 短边格数（长边≈警戒线长度，受 5 分钟倒计时约束，默认 72x24）
+@export var arena_push_length: int = 72
+@export var arena_push_thickness: int = 24
 
 @export_group("岩浆地面")
 ## 岩浆对玩家结算一次扣多少血
@@ -156,6 +159,9 @@ func _ready() -> void:
 	if arena_mode == ArenaGen.MODE_ROPE:
 		arena_w = arena_rope_length
 		arena_h = arena_rope_thickness
+	elif arena_mode == ArenaGen.MODE_PUSH:
+		arena_w = arena_push_length
+		arena_h = arena_push_thickness
 	arena_data = generator.generate(arena_w, arena_h, use_seed, arena_mode)
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
