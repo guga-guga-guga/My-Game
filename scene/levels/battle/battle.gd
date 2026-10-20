@@ -12,6 +12,21 @@ const LevelGoal = preload("res://scene/levels/battle/level_goal.gd")
 const BossScene = preload("res://scene/entities/bosses/boss.tscn")
 const BossConfig = preload("res://resources/config/enemy_boss.tres")
 const AllyScene = preload("res://scene/entities/ally/ally.tscn")
+const PushBoxScene = preload("res://scene/entities/objectives/push_box.tscn")
+const PickupScene := preload("res://scene/entities/pickups/pickup.tscn")
+## 房间道具房随机用这几种道具
+const ROOM_PICKUP_CONFIGS: Array = [
+	preload("res://resources/config/pickup_heal.tres"),
+	preload("res://resources/config/pickup_rapid.tres"),
+	preload("res://resources/config/pickup_speed.tres"),
+	preload("res://resources/config/pickup_spiral.tres"),
+]
+## 临时友方：2 血、伤害固定 2、射速用持枪敌人的、撤离每人 40 金币
+const TEMP_ALLY_MAX_HEALTH := 2
+const TEMP_ALLY_DAMAGE := 2
+const TEMP_ALLY_FIRE_INTERVAL := 0.75
+const TEMP_ALLY_REWARD_GOLD := 40
+const TEMP_ALLY_FOLLOW_LIMIT := 2          ## 超过这个人数就不再老实跟着箱子
 const AllyIcon := preload("res://resources/texture/icon.png")
 const ALLY_NAME := "队友A"
 const HUD_FONT_GOLD := 28
@@ -33,6 +48,14 @@ const HUD_ICON_SIZE := 48.0
 ## 推车关：长边 / 短边格数（长边≈警戒线长度，受 5 分钟倒计时约束，默认 72x24）
 @export var arena_push_length: int = 72
 @export var arena_push_thickness: int = 24
+
+@export_group("推车关房间")
+## 按住交互键多久开门 / 关门（用户要求 5 秒）
+@export var room_interact_seconds: float = 5.0
+## 玩家离门口多近才能交互（格）
+@export var room_reach_cells: float = 1.6
+## 玩家靠近到这个距离才预生成房间里的敌人（格，按房间矩形算）
+@export var room_prespawn_cells: float = 6.0
 
 @export_group("岩浆地面")
 ## 岩浆对玩家结算一次扣多少血
@@ -73,6 +96,27 @@ var goal: Dictionary = {}
 
 ## 玩家在岩浆上已经连续站了多久（跨岩浆瓦片累计，离开岩浆清零）
 var _lava_stand_time: float = 0.0
+
+# ---- 推车关 ----
+var _push_box = null                       ## 箱子（PushBox）
+var _push_arrived: bool = false            ## 箱子是否已经抵达终点
+var _temp_allies: Array = []               ## 本关的临时友方单位（不进右侧 HUD）
+var _room_states: Array = []               ## 每个房间的运行时状态（是否打开 / 是否已生成内容…）
+var _room_mask_layer: CanvasLayer = null   ## 黑幕所在的画布层
+var _room_masks: Array = []                ## 上锁房间的黑幕（ColorRect）
+var _room_door_bodies: Array = []          ## 房间门的碰撞体（关着时挡住玩家）
+var _room_enemies: Array = []              ## 每个房间刷出来的敌人
+var _room_ui_layer: CanvasLayer = null
+var _room_clock_icon: Sprite2D = null
+var _room_clock_label: Label = null
+var _room_interact_target: int = -1
+var _temp_ally_candidates: Array = []      ## 房间里站着、等玩家决定要不要带走的临时队友
+var _recruited_allies: Array = []          ## 已经带走的临时队友
+var _temp_ally_pick: int = -1              ## 正在对话的临时队友下标
+var _temp_ally_layer: CanvasLayer = null
+var _temp_ally_label: Label = null
+var _temp_ally_wander_left: float = 0.0
+var _room_ever_opened: Array = []          ## 房间是否被打开过（打开过就不再盖黑幕）
 ## 每只敌人各自在岩浆上站了多久（instance_id -> 秒），玩家与敌人各算各的
 var _enemy_lava_time: Dictionary = {}
 
@@ -152,6 +196,8 @@ func _ready() -> void:
 	var use_seed := arena_seed if arena_seed != 0 else random_generator.randi()
 	var generator = ArenaGen.new()
 	var arena_mode := ArenaGen.MODE_BOSS if (goal["type"] == LevelGoal.TYPE_BOSS or goal["type"] == LevelGoal.TYPE_DEFEND) else ArenaGen.MODE_NORMAL
+	if goal["type"] == LevelGoal.TYPE_PUSH:
+		arena_mode = ArenaGen.MODE_PUSH
 	if not arena_mode_override.is_empty():
 		arena_mode = arena_mode_override
 	var arena_w := arena_width
@@ -169,6 +215,10 @@ func _ready() -> void:
 	_apply_run_state_to_player()
 	if not player.heal_ally_requested.is_connected(_on_player_heal_requested):
 		player.heal_ally_requested.connect(_on_player_heal_requested)
+
+	if arena_mode == ArenaGen.MODE_PUSH:
+		_spawn_push_box()
+		_setup_push_rooms()
 
 	# ⑤ 顺序关键:铺完瓦片之后才能重建寻路网格
 	_setup_enemy_pathfinder()
@@ -579,6 +629,7 @@ func _process(delta: float) -> void:
 	_update_waves(delta)
 	_refresh_goal_hud()
 	_update_lava_damage(delta)
+	_update_push_rooms(delta)
 
 
 ## 波次推进:刷完一波 到 等场上清空 到 下一波；最后一波清空即达成目标
@@ -1320,6 +1371,9 @@ func _goal_state() -> Dictionary:
 		"boss_defeated": _living_boss_count() == 0,   # 三重 BOSS：全部家族归零才算达成
 		"boss_hp_ratio": _boss_hp_ratio(),          # M3:Boss 死亡时由 Boss 置真
 		"guard_alive": _guard_target != null and is_instance_valid(_guard_target) and not _guard_target.is_dead,
+		"push_arrived": _push_arrived,
+		"push_progress": int(_push_box.moved_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
+		"push_total": int(_push_box.total_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
 	}
 
 
@@ -1341,6 +1395,12 @@ func _check_game_result() -> void:
 			_show_result_dialog("通关", _build_run_summary())      # 最终层: 显示整局总结
 		elif goal.get("type", "") == LevelGoal.TYPE_BOSS:
 			_show_result_dialog("BOSS 击破", "第 %d 层 BOSS 已被击败 回中间地图" % RunState.floor_index)
+		elif goal.get("type", "") == LevelGoal.TYPE_PUSH:
+			var reward := _temp_ally_reward_gold()
+			if reward > 0:
+				RunState.add_gold(reward)
+			_show_result_dialog("推车成功",
+				"箱子抵达终点，撤离奖励 %d 金币（临时友方）" % reward)
 		else:
 			_show_result_dialog(RESULT_TITLE_WIN, "本层目标达成 回中间地图")
 		return
@@ -1703,6 +1763,514 @@ func _refresh_guard_hud() -> void:
 
 func _on_guard_health_changed(_current: int, _maximum: int) -> void:
 	_refresh_guard_hud()
+
+
+## 推车关：初始化房间（黑幕 / 门碰撞 / 交互 UI / 预生成标记）
+func _setup_push_rooms() -> void:
+	_room_states.clear()
+	_room_masks.clear()
+	_room_door_bodies.clear()
+	_room_enemies.clear()
+	_room_ever_opened.clear()
+	for room in arena_data.get("rooms", []):
+		var state: Dictionary = (room as Dictionary).duplicate(true)
+		var locked := bool(state.get("locked", false))
+		state["opened"] = not locked          # 敞开的房间一开始就是开的
+		state["spawned"] = false
+		state["activated"] = false
+		state["interact_left"] = room_interact_seconds
+		_room_states.append(state)
+		_room_ever_opened.append(not locked)
+		_room_enemies.append([])
+	_build_room_masks()
+	_build_room_door_bodies()
+	_build_room_interact_ui()
+	for i in range(_room_states.size()):
+		_apply_room_state(i)
+	if debug_print:
+		var locked_count := 0
+		for state in _room_states:
+			if bool(state.get("locked", false)):
+				locked_count += 1
+		print("[Battle] 推车关房间 %d 个（上锁 %d 个）" % [_room_states.size(), locked_count])
+
+
+## 上锁房间盖上纯黑遮罩，玩家在开门前看不到里面
+func _build_room_masks() -> void:
+	_room_mask_layer = CanvasLayer.new()
+	_room_mask_layer.name = "RoomMaskLayer"
+	_room_mask_layer.layer = 4
+	add_child(_room_mask_layer)
+	var holder := Node2D.new()
+	holder.name = "Masks"
+	_room_mask_layer.add_child(holder)
+	for state in _room_states:
+		var rect: Rect2i = state["rect"]
+		var mask := ColorRect.new()
+		mask.color = Color(0, 0, 0, 1)
+		mask.position = Vector2(rect.position) * float(ArenaGen.TILE_SIZE)
+		mask.size = Vector2(rect.size) * float(ArenaGen.TILE_SIZE)
+		mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(mask)
+		_room_masks.append(mask)
+
+
+## 关着的门要挡住玩家和敌人：每个门口格一个碰撞矩形
+func _build_room_door_bodies() -> void:
+	for state in _room_states:
+		var body := StaticBody2D.new()
+		body.name = "RoomDoor"
+		body.collision_layer = 1
+		body.collision_mask = 0
+		add_child(body)
+		var shapes: Array[CollisionShape2D] = []
+		for cell in state["door_cells"]:
+			var shape := RectangleShape2D.new()
+			shape.size = Vector2(ArenaGen.TILE_SIZE, ArenaGen.TILE_SIZE)
+			var collider := CollisionShape2D.new()
+			collider.shape = shape
+			collider.position = cell_to_world(cell)
+			body.add_child(collider)
+			shapes.append(collider)
+		_room_door_bodies.append(shapes)
+
+
+## 屏幕下方的「时钟 + 5.0S」提示（只在按住交互键时出现）
+func _build_room_interact_ui() -> void:
+	_room_ui_layer = CanvasLayer.new()
+	_room_ui_layer.name = "RoomInteractLayer"
+	_room_ui_layer.layer = 6
+	add_child(_room_ui_layer)
+	var holder := Node2D.new()
+	holder.name = "Clock"
+	_room_ui_layer.add_child(holder)
+	_room_clock_icon = Sprite2D.new()
+	var atlas := AtlasTexture.new()
+	atlas.atlas = load("res://resources/texture/道具ui.png")
+	atlas.region = Rect2(0, 0, 16, 16)
+	_room_clock_icon.texture = atlas
+	_room_clock_icon.scale = Vector2(2.5, 2.5)
+	_room_clock_icon.visible = false
+	holder.add_child(_room_clock_icon)
+	_room_clock_label = Label.new()
+	var font := load("res://resources/font/IPix.ttf") as Font
+	if font != null:
+		_room_clock_label.add_theme_font_override("font", font)
+	_room_clock_label.add_theme_font_size_override("font_size", 26)
+	_room_clock_label.add_theme_color_override("font_color", Color(1, 0.95, 0.7, 1))
+	_room_clock_label.visible = false
+	holder.add_child(_room_clock_label)
+
+
+## 房间里的道具：直接摆在地上，玩家走过去就能拿
+func _spawn_room_pickup(cell: Vector2i) -> void:
+	var config = ROOM_PICKUP_CONFIGS[randi() % ROOM_PICKUP_CONFIGS.size()]
+	var pickup := PickupScene.instantiate() as Pickup
+	if pickup == null:
+		return
+	pickup.config = config
+	add_child(pickup)
+	pickup.global_position = cell_to_world(cell)
+
+
+## 房间里的临时友方：外形用队友、2 血、伤害固定 2、射速按住持枪敌人；
+## 带走后守在箱子附近跟着走；超过 2 名就不再老实待着（会跑出去打）
+func _spawn_temp_ally(cell: Vector2i) -> void:
+	var ally = AllyScene.instantiate()
+	add_child(ally)
+	var body := player.get_node_or_null("BodySprite") as AnimatedSprite2D
+	# setup 的第二个参数要拿玩家自己的 SpriteFrames（队友共用本体动画），
+	# 所以这里照常传玩家；"守在箱子附近"通过每帧把守卫点指到箱子实现
+	ally.setup(player, body, TEMP_ALLY_DAMAGE, TEMP_ALLY_FIRE_INTERVAL, enemy_container)
+	ally.global_position = cell_to_world(cell)
+	ally.fire_interval = TEMP_ALLY_FIRE_INTERVAL
+	ally.current_health = TEMP_ALLY_MAX_HEALTH
+	ally.set_state(ally.STATE_GUARD)
+	ally.set_physics_process(false)          # 没被带走之前站着不动
+	ally.died.connect(_on_temp_ally_died.bind(ally))
+	_temp_ally_candidates.append(ally)
+
+
+## 临时友方阵亡：在原地生成一只持枪敌人（算普通敌人，掉金币、计击杀）
+func _on_temp_ally_died(ally) -> void:
+	var cell := arena_cell_at((ally as Node2D).global_position)
+	_spawn_shooter_enemy_at(cell)
+	if debug_print:
+		print("[Battle] 临时友方阵亡，位置 %s 生成持枪敌人" % str(cell))
+
+
+func _spawn_shooter_enemy_at(cell: Vector2i) -> void:
+	if SHOOTER_CONFIG == null:
+		return
+	var scene := enemy_scene
+	if SHOOTER_CONFIG.scene_override != null:
+		scene = SHOOTER_CONFIG.scene_override      # 持枪敌人有自己的场景
+	var enemy := scene.instantiate() as Enemy
+	if enemy == null:
+		return
+	enemy_container.add_child(enemy)
+	enemy.global_position = cell_to_world(cell)
+	enemy.setup(SHOOTER_CONFIG, player)
+	enemy.died.connect(_on_enemy_died)
+
+
+## 临时友方交互：靠近 + 按一次交互键 -> 弹出「带走 / 不带」；再按一次确认带走
+func _update_temp_ally_interaction() -> void:
+	if _temp_ally_candidates.is_empty():
+		return
+	var nearest := -1
+	var nearest_distance := INF
+	for i in range(_temp_ally_candidates.size()):
+		var ally = _temp_ally_candidates[i]
+		if not is_instance_valid(ally) or bool(ally.is_dead):
+			continue
+		var distance := player.global_position.distance_to((ally as Node2D).global_position) / float(ArenaGen.TILE_SIZE)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest = i
+	if nearest_distance > room_reach_cells:
+		_close_temp_ally_dialog()
+		return
+	if Input.is_action_just_pressed("interact"):
+		if _temp_ally_pick == nearest:
+			_recruit_temp_ally(nearest)
+		else:
+			_temp_ally_pick = nearest
+			_show_temp_ally_dialog()
+
+
+func _show_temp_ally_dialog() -> void:
+	if _temp_ally_layer == null:
+		_temp_ally_layer = CanvasLayer.new()
+		_temp_ally_layer.name = "TempAllyDialogLayer"
+		_temp_ally_layer.layer = 6
+		add_child(_temp_ally_layer)
+		_temp_ally_label = Label.new()
+		var font := load("res://resources/font/IPix.ttf") as Font
+		if font != null:
+			_temp_ally_label.add_theme_font_override("font", font)
+		_temp_ally_label.add_theme_font_size_override("font_size", 22)
+		_temp_ally_label.add_theme_color_override("font_color", Color(1, 1, 0.85, 1))
+		_temp_ally_layer.add_child(_temp_ally_label)
+	_temp_ally_label.text = "带走这名队友？再按一次交互键带走，走开则不带走"
+	_temp_ally_label.visible = true
+	var size := get_viewport().get_visible_rect().size
+	_temp_ally_label.position = Vector2(size.x * 0.5 - 260.0, size.y - 108.0)
+
+
+func _close_temp_ally_dialog() -> void:
+	_temp_ally_pick = -1
+	if _temp_ally_label != null:
+		_temp_ally_label.visible = false
+
+
+func _recruit_temp_ally(index: int) -> void:
+	var ally = _temp_ally_candidates[index]
+	_temp_ally_candidates.remove_at(index)
+	_close_temp_ally_dialog()
+	if not is_instance_valid(ally):
+		return
+	ally.set_physics_process(true)
+	ally.set_state(ally.STATE_GUARD)
+	_recruited_allies.append(ally)
+	if debug_print:
+		print("[Battle] 带走临时友方，当前 %d 名" % _recruited_allies.size())
+
+
+## 撤离时按"带走且仍然活着"的人数给金币
+func _temp_ally_reward_gold() -> int:
+	var alive := 0
+	for ally in _recruited_allies:
+		if is_instance_valid(ally) and not bool(ally.is_dead):
+			alive += 1
+	return alive * TEMP_ALLY_REWARD_GOLD
+
+
+## 让被带走的临时友方把"守卫点"指向箱子（守在箱子附近跟着走）
+func _update_temp_ally_follow() -> void:
+	if _push_box == null or not is_instance_valid(_push_box):
+		return
+	for ally in _recruited_allies:
+		if not is_instance_valid(ally) or bool(ally.is_dead):
+			continue
+		ally.debug_set_guard_point((_push_box as Node2D).global_position)
+
+
+## 超过 2 名之后，多出来的临时友方会自己跑出去（开门 / 探路 / 主动打）
+func _update_temp_ally_wander(delta: float) -> void:
+	if _recruited_allies.size() <= TEMP_ALLY_FOLLOW_LIMIT:
+		return
+	_temp_ally_wander_left = maxf(_temp_ally_wander_left - delta, 0.0)
+	if _temp_ally_wander_left > 0.0:
+		return
+	_temp_ally_wander_left = 5.0
+	for idx in range(TEMP_ALLY_FOLLOW_LIMIT, _recruited_allies.size()):
+		var ally = _recruited_allies[idx]
+		if not is_instance_valid(ally) or bool(ally.is_dead):
+			continue
+		if randf() < 0.3:
+			ally.set_state(ally.STATE_ATTACK)
+
+
+## 把房间状态同步到画面上：门瓦片 / 门碰撞 / 黑幕
+func _apply_room_state(index: int) -> void:
+	var state: Dictionary = _room_states[index]
+	var opened := bool(state["opened"])
+	var overlay := $OverlayTileMapLayer as TileMapLayer
+	for cell in state["door_cells"]:
+		if opened:
+			overlay.erase_cell(cell)
+		else:
+			overlay.set_cell(cell, ArenaGen.ROOM_DOOR_SOURCE, ArenaGen.ROOM_DOOR_TILE)
+	var shapes: Array = _room_door_bodies[index]
+	for collider in shapes:
+		(collider as CollisionShape2D).disabled = opened
+	var mask := _room_masks[index] as ColorRect
+	# 只有"从没打开过的上锁房间"才盖黑幕
+	mask.visible = not opened and not bool(_room_ever_opened[index])
+	if opened:
+		_room_ever_opened[index] = true
+
+
+## 每帧：预生成附近房间的敌人 + 处理门的按住交互
+func _update_push_rooms(delta: float) -> void:
+	if _room_states.is_empty():
+		return
+	_prespawn_rooms_near_player()
+	_tick_room_interaction(delta, Input.is_action_pressed("interact"))
+	_update_temp_ally_interaction()
+	_update_temp_ally_follow()
+	_update_temp_ally_wander(delta)
+
+
+## 按住累计开门/关门；松开或离开就清零重来
+func _tick_room_interaction(delta: float, pressed: bool) -> void:
+	var target := _find_room_door_target()
+	if target != _room_interact_target:
+		_room_interact_target = target
+		for state in _room_states:
+			state["interact_left"] = room_interact_seconds
+	if target < 0:
+		_set_room_clock_visible(false)
+		return
+	var state: Dictionary = _room_states[target]
+	if not pressed:
+		state["interact_left"] = room_interact_seconds
+		_set_room_clock_visible(false)
+		return
+	state["interact_left"] = maxf(float(state["interact_left"]) - delta, 0.0)
+	_set_room_clock_visible(true)
+	if float(state["interact_left"]) <= 0.0:
+		_toggle_room(target)
+		state["interact_left"] = room_interact_seconds
+		_set_room_clock_visible(false)
+
+
+## 找玩家脚边最近的门（超过 room_reach_cells 就返回 -1）
+func _find_room_door_target() -> int:
+	if player == null or not is_instance_valid(player):
+		return -1
+	var best := -1
+	var best_distance := INF
+	for i in range(_room_states.size()):
+		var state: Dictionary = _room_states[i]
+		for cell in state["door_cells"]:
+			var door_position := cell_to_world(cell)
+			var distance := player.global_position.distance_to(door_position) / float(ArenaGen.TILE_SIZE)
+			if distance < best_distance:
+				best_distance = distance
+				best = i
+	if best_distance <= room_reach_cells:
+		return best
+	return -1
+
+
+## 开/关门
+func _toggle_room(index: int) -> void:
+	var state: Dictionary = _room_states[index]
+	var will_open := not bool(state["opened"])
+	if not will_open:
+		# 关门时如果玩家正站在门瓦片上，按他相对门的位置把他挤出去
+		_expel_player_from_door(state)
+	state["opened"] = will_open
+	_room_states[index] = state
+	_apply_room_state(index)
+	if will_open:
+		_spawn_room_content(index)
+		_activate_room_enemies(index)
+	if debug_print:
+		print("[Battle] 房间%d %s（内容=%s）" % [
+			index, "打开" if will_open else "关上", String(state["content"])])
+
+
+## 玩家离房间够近就把里面的敌人先生成出来（但先不活动、不敌对）
+func _prespawn_rooms_near_player() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	for i in range(_room_states.size()):
+		var state: Dictionary = _room_states[i]
+		if bool(state["spawned"]):
+			continue
+		var rect: Rect2i = state["rect"]
+		var center := Vector2(rect.position) + Vector2(rect.size) * 0.5
+		var player_cell := player.global_position / float(ArenaGen.TILE_SIZE)
+		var distance := (player_cell - center).length()
+		if distance <= room_prespawn_cells + float(maxi(rect.size.x, rect.size.y)) * 0.5:
+			_spawn_room_content(i)
+
+
+## 房间里刷内容：敌人（道具 / 临时队友在第 4 块补上）
+func _spawn_room_content(index: int) -> void:
+	var state: Dictionary = _room_states[index]
+	if bool(state["spawned"]):
+		return
+	state["spawned"] = true
+	_room_states[index] = state
+	var cells := _room_spawn_cells(state)
+	if cells.is_empty():
+		return
+	match String(state["content"]):
+		"enemy":
+			for i in range(int(state["enemy_count"])):
+				_spawn_room_enemy(index, cells[i % cells.size()])
+		"item":
+			for i in range(maxi(int(state["item_count"]), 1)):
+				_spawn_room_pickup(cells[(i * 2 + 1) % cells.size()])
+		"ally":
+			_spawn_temp_ally(cells[cells.size() / 2])
+
+
+func _room_spawn_cells(state: Dictionary) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var rect: Rect2i = state["rect"]
+	var door_cells: Array = state["door_cells"]
+	for y in range(rect.position.y, rect.end.y):
+		for x in range(rect.position.x, rect.end.x):
+			var cell := Vector2i(x, y)
+			if door_cells.has(cell):
+				continue
+			cells.append(cell)
+	return cells
+
+
+func _spawn_room_enemy(index: int, cell: Vector2i) -> void:
+	var config := _pick_enemy_config()
+	if config == null:
+		return
+	var scene := enemy_scene
+	if config.scene_override != null:
+		scene = config.scene_override
+	var enemy := scene.instantiate() as Enemy
+	if enemy == null:
+		return
+	enemy_container.add_child(enemy)
+	enemy.global_position = cell_to_world(cell)
+	enemy.setup(config, player)
+	enemy.died.connect(_on_enemy_died)
+	enemy.set_ai_suspended(true)          # 开门前不活动、不敌对
+	enemy.modulate = Color(1, 1, 1, 1)
+	(_room_enemies[index] as Array).append(enemy)
+
+
+## 开门后房间里的敌人开始活动并锁定玩家
+func _activate_room_enemies(index: int) -> void:
+	var state: Dictionary = _room_states[index]
+	if bool(state["activated"]):
+		return
+	state["activated"] = true
+	_room_states[index] = state
+	for enemy in _room_enemies[index]:
+		if is_instance_valid(enemy) and not (enemy as Enemy).is_dead:
+			(enemy as Enemy).set_ai_suspended(false)
+
+
+## 关门时把站在门瓦片上的玩家挤到房间内或房间外
+func _expel_player_from_door(state: Dictionary) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	var door_cells: Array = state["door_cells"]
+	var rect: Rect2i = state["rect"]
+	var player_cell := arena_cell_at(player.global_position)
+	if not door_cells.has(player_cell):
+		return
+	# 判断玩家该往房间内挤还是往外挤：看门格相对房间中心的方向
+	var room_center := Vector2(rect.position) + Vector2(rect.size) * 0.5
+	var outward := (Vector2(player_cell) - room_center)
+	var inside_target := player_cell
+	var outside_target := player_cell
+	if absf(outward.x) > absf(outward.y):
+		var step_x := 1 if outward.x < 0.0 else -1        # 朝房间中心
+		inside_target = player_cell + Vector2i(-step_x, 0)
+		outside_target = player_cell + Vector2i(step_x, 0)
+	else:
+		var step_y := 1 if outward.y < 0.0 else -1
+		inside_target = player_cell + Vector2i(0, -step_y)
+		outside_target = player_cell + Vector2i(0, step_y)
+	if _is_walkable_cell(inside_target):
+		player.global_position = cell_to_world(inside_target)
+	elif _is_walkable_cell(outside_target):
+		player.global_position = cell_to_world(outside_target)
+
+
+func _is_walkable_cell(cell: Vector2i) -> bool:
+	var grid: Array = arena_data.get("grid", [])
+	var w: int = int(arena_data.get("width", 0))
+	var h: int = int(arena_data.get("height", 0))
+	if cell.x < 0 or cell.y < 0 or cell.x >= w or cell.y >= h:
+		return false
+	if grid.is_empty():
+		return false
+	return int(grid[cell.y * w + cell.x]) == ArenaGen.CELL_FLOOR
+
+
+func arena_cell_at(world_position: Vector2) -> Vector2i:
+	return Vector2i(int(floor(world_position.x / float(ArenaGen.TILE_SIZE))),
+		int(floor(world_position.y / float(ArenaGen.TILE_SIZE))))
+
+
+## 时钟 + 倒计时的显隐与位置
+func _set_room_clock_visible(visible_now: bool) -> void:
+	if _room_clock_icon == null or _room_clock_label == null:
+		return
+	_room_clock_icon.visible = visible_now
+	_room_clock_label.visible = visible_now
+	if not visible_now:
+		return
+	var size := get_viewport().get_visible_rect().size
+	_room_clock_icon.position = Vector2(size.x * 0.5 - 46.0, size.y - 64.0)
+	_room_clock_label.position = _room_clock_icon.position + Vector2(26.0, 3.0)
+	var state: Dictionary = _room_states[_room_interact_target]
+	_room_clock_label.text = "%.1fS" % maxf(float(state["interact_left"]), 0.0)
+
+
+## 推车关：把箱子放到起点 3x3，沿警戒线走
+func _spawn_push_box() -> void:
+	var path_cells: Array = arena_data.get("push_path", [])
+	if path_cells.size() < 2:
+		return
+	var cells: Array[Vector2i] = []
+	for cell in path_cells:
+		cells.append(cell)
+	_push_box = PushBoxScene.instantiate()
+	add_child(_push_box)
+	_push_box.setup(cells, player, enemy_container)
+	_push_box.arrived.connect(_on_push_box_arrived)
+	_push_box.status_changed.connect(_on_push_box_status_changed)
+	_push_arrived = false
+	if debug_print:
+		print("[Battle] 推车关: 警戒线 %d 格，箱子已在起点 %s" % [cells.size(), str(cells[0])])
+
+
+func _on_push_box_arrived() -> void:
+	_push_arrived = true
+	if debug_print:
+		print("[Battle] 箱子抵达终点，目标达成")
+
+
+func _on_push_box_status_changed(new_status: String) -> void:
+	if debug_print:
+		print("[Battle] 箱子状态 -> %s（进度 %d/%d）" % [
+			new_status, int(_push_box.moved_cells()), int(_push_box.total_cells())])
 
 
 ## 岩浆地面：玩家和敌人都会被烧。计时只看"是否站在岩浆上"，跨不同岩浆瓦片继续累计 ——

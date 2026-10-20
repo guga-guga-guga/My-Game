@@ -19,9 +19,12 @@ const TYPE_KILL := "kill"
 const TYPE_CLEAR_WAVES := "clear_waves"
 const TYPE_BOSS := "boss"
 const TYPE_DEFEND := "defend"
+const TYPE_PUSH := "push"
 
 ## 守护关固定时长（秒）
 const DEFEND_DURATION := 120.0
+## 推车关固定时长（秒，用户要求 5 分钟）
+const PUSH_DURATION := 300.0
 
 ## 没有限时的目标也给一个宽松上限:让倒计时条仍有意义，且战绩里的用时算得准
 const DEFAULT_TIME_CAP := 600.0
@@ -38,6 +41,8 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 			type = TYPE_BOSS
 		elif node_type == "defend":
 			type = TYPE_DEFEND
+		elif node_type == "push":
+			type = TYPE_PUSH
 		elif node_type == "elite":
 			type = TYPE_KILL
 		else:
@@ -93,6 +98,11 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 		goal["conditions"].append({"type": TYPE_SURVIVE, "target": DEFEND_DURATION, "label": "撑满 %.0f 秒" % DEFEND_DURATION})
 		goal["conditions"].append({"type": TYPE_DEFEND, "target": 1, "label": "守护对象存活"})
 
+	elif type == TYPE_PUSH:
+		# 推车关：5 分钟内把箱子推到终点（超时或玩家死亡判负）
+		goal["time_limit"] = PUSH_DURATION
+		goal["conditions"].append({"type": TYPE_PUSH, "target": 1, "label": "把箱子推到终点"})
+
 	return goal
 
 
@@ -147,6 +157,9 @@ static func progress_text(goal: Dictionary, state: Dictionary) -> String:
 				parts.append("守护对象存活")
 			else:
 				parts.append("守护对象阵亡")
+		elif type == TYPE_PUSH:
+			parts.append("箱子 %d / %d 格" % [
+				int(state.get("push_progress", 0)), int(state.get("push_total", 0))])
 	return " ".join(parts)
 
 
@@ -173,6 +186,9 @@ static func is_satisfied(goal: Dictionary, state: Dictionary) -> bool:
 		elif type == TYPE_DEFEND:
 			if not bool(state.get("guard_alive", false)):
 				return false
+		elif type == TYPE_PUSH:
+			if not bool(state.get("push_arrived", false)):
+				return false
 	return true
 
 
@@ -187,7 +203,7 @@ static func is_timed_out(goal: Dictionary, state: Dictionary) -> bool:
 
 ## 是否是合法的目标类型 build 的强制参数校验用 
 static func is_valid_type(type: String) -> bool:
-	return type == TYPE_SURVIVE or type == TYPE_KILL or type == TYPE_CLEAR_WAVES or type == TYPE_BOSS or type == TYPE_DEFEND
+	return type == TYPE_SURVIVE or type == TYPE_KILL or type == TYPE_CLEAR_WAVES or type == TYPE_BOSS 		or type == TYPE_DEFEND or type == TYPE_PUSH
 
 ## 简短目标描述（路线图按钮上显示，不带"目标:"前缀和限时后缀）
 static func short_label(goal: Dictionary) -> String:

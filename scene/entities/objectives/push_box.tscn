@@ -1,0 +1,19 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scene/entities/objectives/push_box.gd" id="1_box"]
+[ext_resource type="Texture2D" path="res://resources/texture/瓦片.png" id="2_tile"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_box"]
+size = Vector2(20, 20)
+
+[node name="PushBox" type="AnimatableBody2D"]
+script = ExtResource("1_box")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("2_tile")
+region_enabled = true
+region_rect = Rect2(32, 48, 16, 16)
+
+[node name="Shape" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_box")

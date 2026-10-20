@@ -39,6 +39,7 @@ const KIND_COLORS := {
 	"shop": Color(1.0, 0.95, 0.55),        # 商店：偏金光（图形用玩家形象）
 	"boss": Color(1.0, 0.42, 0.38),        # BOSS 关：染红（图形用精英关那一排）
 	"defend": Color(0.55, 0.80, 1.0),      # 守护关：淡蓝（图形用 W.png 第 5 排）
+	"push": Color(1.0, 0.72, 0.35),        # 推车关：橙色
 }
 
 var arena_data: Dictionary = {}

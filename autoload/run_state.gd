@@ -127,6 +127,8 @@ func kind_title(kind: String) -> String:
 			return "BOSS"
 		"defend":
 			return "守护关"
+		"push":
+			return "推车关"
 	return kind
 
 
@@ -150,6 +152,8 @@ func midmap_kinds(index: int = -1) -> Array[String]:
 	var pool: Array[String] = ["elite", "battle", "shop"]
 	if target_floor > 5:
 		pool.append("defend")          # 守护关：第 5 层之后才会出现（用户要求）
+	if target_floor > 1:
+		pool.append("push")            # 推车关：从第 2 层起随机出现（用户要求）
 	for _slot in range(3):
 		kinds.append(pool[rng.randi_range(0, pool.size() - 1)])
 	if not kinds.has("battle"):
