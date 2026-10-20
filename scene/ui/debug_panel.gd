@@ -222,6 +222,20 @@ func _build_debug_level_row() -> void:
 	_selectable.append({"kind": "debug_level", "key": "debug_level", "deltas": [],
 			"buttons": [level_button], "control": level_box})
 
+	# 「推车关」：一键直接进推车关（第 3 层），不用再点开调试菜单
+	var push_button := Button.new()
+	push_button.name = "PushLevelButton"
+	push_button.text = "推车关"
+	push_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	push_button.custom_minimum_size = Vector2(150.0, 36.0)
+	push_button.focus_mode = Control.FOCUS_NONE
+	push_button.add_theme_font_size_override("font_size", FONT_ROW)
+	push_button.pressed.connect(_on_push_level_button_pressed)
+	level_box.add_child(push_button)
+
+	_selectable.append({"kind": "push_level", "key": "push_level", "deltas": [],
+			"buttons": [push_button], "control": level_box})
+
 
 func open_panel() -> void:
 	if not _enabled or _open:
@@ -510,6 +524,15 @@ func _hire_ally() -> void:
 	_refresh_all()
 
 
+## 点「推车关」：直接开一局推车关（第 3 层，程序化推车地形）
+func _on_push_level_button_pressed() -> void:
+	if not _enabled:
+		return
+	if _open:
+		close_panel()
+	debug_start_level("push")
+
+
 func _on_debug_menu_button_pressed() -> void:
 	if not _enabled:
 		return
@@ -541,6 +564,13 @@ func debug_build_ally_level() -> Dictionary:
 	return {"floor": 1, "node_type": "battle"}
 
 
+## 推车关的启动数据（只做准备、不切场景，方便自检单独调用）
+func debug_build_push_level() -> Dictionary:
+	RunState.reset()
+	RunState.floor_index = 3
+	return {"floor": 3, "node_type": "push"}
+
+
 ## 调试：直接进指定关卡（面板按钮 / 调试菜单 / 自检都走这里）
 func debug_start_level(level_id: String) -> void:
 	match level_id:
@@ -552,6 +582,9 @@ func debug_start_level(level_id: String) -> void:
 			RunState.reset()
 			RunState.floor_index = 5
 			GameFlow.start_battle({"floor": 5, "node_type": "boss"})
+		"push":
+			print("[DebugPanel] 调试: 进推车关（第 3 层）")
+			GameFlow.start_battle(debug_build_push_level())
 		"boss_floor10":
 			print("[DebugPanel] 调试: 进第 10 层三重 BOSS 关")
 			RunState.reset()
