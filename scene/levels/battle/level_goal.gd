@@ -23,8 +23,8 @@ const TYPE_PUSH := "push"
 
 ## 守护关固定时长（秒）
 const DEFEND_DURATION := 120.0
-## 推车关固定时长（秒，用户要求 5 分钟）
-const PUSH_DURATION := 300.0
+## 推车关固定时长（秒，用户要求 3 分钟）
+const PUSH_DURATION := 180.0
 
 ## 没有限时的目标也给一个宽松上限:让倒计时条仍有意义，且战绩里的用时算得准
 const DEFAULT_TIME_CAP := 600.0

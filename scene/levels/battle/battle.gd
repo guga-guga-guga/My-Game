@@ -14,6 +14,7 @@ const BossConfig = preload("res://resources/config/enemy_boss.tres")
 const AllyScene = preload("res://scene/entities/ally/ally.tscn")
 const PushBoxScene = preload("res://scene/entities/objectives/push_box.tscn")
 const PickupScene := preload("res://scene/entities/pickups/pickup.tscn")
+const DialogueBoxScript := preload("res://scene/hub/midmap/dialogue_box.gd")
 ## 房间道具房随机用这几种道具
 const ROOM_PICKUP_CONFIGS: Array = [
 	preload("res://resources/config/pickup_heal.tres"),
@@ -27,6 +28,10 @@ const TEMP_ALLY_DAMAGE := 2
 const TEMP_ALLY_FIRE_INTERVAL := 0.75
 const TEMP_ALLY_REWARD_GOLD := 40
 const TEMP_ALLY_FOLLOW_LIMIT := 2          ## 超过这个人数就不再老实跟着箱子
+## 临时友方活动范围：箱子为中心的 9x9 格（半径 4 格；原来是 5x5，用户要求再扩大一倍）
+const TEMP_ALLY_LEASH_CELLS := 4
+## 出范围后往箱子右侧靠的偏移（像素）：1 格半左右，不挤在一起
+const TEMP_ALLY_RETURN_OFFSET := Vector2(24.0, 0.0)
 const AllyIcon := preload("res://resources/texture/icon.png")
 const ALLY_NAME := "队友A"
 const HUD_FONT_GOLD := 28
@@ -50,12 +55,23 @@ const HUD_ICON_SIZE := 48.0
 @export var arena_push_thickness: int = 24
 
 @export_group("推车关房间")
-## 按住交互键多久开门 / 关门（用户要求 5 秒）
-@export var room_interact_seconds: float = 5.0
+## 按住交互键多久开门 / 关门（用户要求 3 秒）
+@export var room_interact_seconds: float = 3.0
 ## 玩家离门口多近才能交互（格）
 @export var room_reach_cells: float = 1.6
-## 玩家靠近到这个距离才预生成房间里的敌人（格，按房间矩形算）
+## 已废弃：房间内容改成玩家按下交互键那一刻才生成，这个值不再生效（保留字段兼容旧场景）
 @export var room_prespawn_cells: float = 6.0
+## 门口提示的字号（调小就不挡视野了）
+@export var room_prompt_font_size: int = 12
+## 门口提示相对门格中心的偏移
+@export var room_prompt_offset: Vector2 = Vector2(-40.0, -26.0)
+## 头顶时钟图标相对玩家的偏移
+@export var room_clock_offset: Vector2 = Vector2(-16.0, -40.0)
+## 头顶倒计时文字相对玩家时钟的偏移
+@export var room_clock_text_offset: Vector2 = Vector2(8.0, -42.0)
+## 门在玩家上方时，倒计时改到角色下方的偏移（避免被黑幕/门挡）
+@export var room_clock_offset_below: Vector2 = Vector2(-16.0, 26.0)
+@export var room_clock_text_offset_below: Vector2 = Vector2(8.0, 22.0)
 
 @export_group("岩浆地面")
 ## 岩浆对玩家结算一次扣多少血
@@ -113,10 +129,11 @@ var _room_interact_target: int = -1
 var _temp_ally_candidates: Array = []      ## 房间里站着、等玩家决定要不要带走的临时队友
 var _recruited_allies: Array = []          ## 已经带走的临时队友
 var _temp_ally_pick: int = -1              ## 正在对话的临时队友下标
-var _temp_ally_layer: CanvasLayer = null
-var _temp_ally_label: Label = null
+var _temp_ally_dialogue = null             ## 正式对话框（复用中间地图那套）
 var _temp_ally_wander_left: float = 0.0
-var _room_ever_opened: Array = []          ## 房间是否被打开过（打开过就不再盖黑幕）
+var _room_ever_opened: Array = []          ## 房间是否被打开过（保留字段，黑幕改成按开关状态走）
+var _door_prompts: Array = []              ## 每个房间门口的「按住 E 交互」提示
+var _room_spawn_markers: Array = []        ## 每个房间对应的红门出怪点（关上门就不刷怪）
 ## 每只敌人各自在岩浆上站了多久（instance_id -> 秒），玩家与敌人各算各的
 var _enemy_lava_time: Dictionary = {}
 
@@ -189,6 +206,7 @@ func _ready() -> void:
 	_setup_hud()
 	_setup_goal_hud()
 	_setup_battle_hud()
+	_raise_hud_above_world()
 	_setup_pause_menu()
 	_apply_goal_hud_layout()
 
@@ -223,6 +241,8 @@ func _ready() -> void:
 	# ⑤ 顺序关键:铺完瓦片之后才能重建寻路网格
 	_setup_enemy_pathfinder()
 	_collect_enemy_spawn_points()
+	if not _room_states.is_empty():
+		_refresh_room_spawn_markers()
 	_warn_spawn_points_inside_walls()
 	_spawn_ally_if_hired()
 	_collect_enemy_configs()
@@ -232,6 +252,11 @@ func _ready() -> void:
 	if goal["type"] == LevelGoal.TYPE_DEFEND:
 		_spawn_defend_target()
 		_configure_defend_spawn()
+	if arena_mode == ArenaGen.MODE_PUSH:
+		# 推车关红门刷怪放慢：每 5 秒一只，别把推车路堵死
+		spawn_interval = 5.0
+		min_spawn_interval = 5.0
+		spawn_count_per_tick = 1
 	_configure_enemy_spawn_timer()
 	_keep_player_centered()
 
@@ -244,7 +269,8 @@ func _ready() -> void:
 		_spawn_bosses_for_floor()
 		_start_boss_door_spawner()
 	elif _waves.is_empty():
-		_spawn_initial_enemies()
+		if arena_mode != ArenaGen.MODE_PUSH:
+			_spawn_initial_enemies()          # 推车关开局不刷一片，只靠红门每 5 秒一只
 		_start_enemy_spawn_timer()
 	else:
 		_wave_timer_left = 0.6
@@ -307,6 +333,14 @@ func _on_run_state_health_changed(current: int, maximum: int) -> void:
 
 
 ## 右上角：金币（用户要求战斗里也显示）+ 队友头像/名字/血量/状态
+## 玩家头顶的 HUD（生命/时间条）挂在世界空间的 HUDLayer 上，
+## 不抬高 z 会被房间黑幕、门口提示这些东西盖住（实测遮挡）
+func _raise_hud_above_world() -> void:
+	var hud_layer := get_node_or_null("Player/HUDLayer") as Node2D
+	if hud_layer != null:
+		hud_layer.z_index = 200          # 永远压在世界物体 / 黑幕（40） / 提示（80）之上
+
+
 func _setup_battle_hud() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "BattleHud"
@@ -1785,6 +1819,7 @@ func _setup_push_rooms() -> void:
 	_build_room_masks()
 	_build_room_door_bodies()
 	_build_room_interact_ui()
+	_map_room_spawn_markers()
 	for i in range(_room_states.size()):
 		_apply_room_state(i)
 	if debug_print:
@@ -1795,18 +1830,55 @@ func _setup_push_rooms() -> void:
 		print("[Battle] 推车关房间 %d 个（上锁 %d 个）" % [_room_states.size(), locked_count])
 
 
-## 上锁房间盖上纯黑遮罩，玩家在开门前看不到里面
+## 把每个房间和它的红门出怪点（Marker2D）对上号：门关着 → 这个出怪点不刷怪
+func _map_room_spawn_markers() -> void:
+	_room_spawn_markers.clear()
+	for _i in range(_room_states.size()):
+		_room_spawn_markers.append(null)
+	var doors: Array = arena_data.get("doors", [])
+	var markers: Array = enemy_spawn_points_root.get_children()
+	var count: int = mini(doors.size(), markers.size())
+	for i in range(count):
+		var door: Dictionary = doors[i]
+		if not door.has("room"):
+			continue
+		var room_index := int(door["room"])
+		if room_index >= 0 and room_index < _room_spawn_markers.size():
+			_room_spawn_markers[room_index] = markers[i]
+
+
+## 门开着才把这个房间的红门放进刷怪点池，关上就移出去
+func _update_room_spawn_marker(index: int, opened: bool) -> void:
+	if index < 0 or index >= _room_spawn_markers.size():
+		return
+	var marker = _room_spawn_markers[index]
+	if marker == null or not is_instance_valid(marker):
+		return
+	var listed := enemy_spawn_points.has(marker)
+	if opened and not listed:
+		enemy_spawn_points.append(marker)
+	elif not opened and listed:
+		enemy_spawn_points.erase(marker)
+
+
+## 全部房间按当前开关状态重新同步一遍出怪点
+func _refresh_room_spawn_markers() -> void:
+	for i in range(_room_states.size()):
+		_update_room_spawn_marker(i, bool(_room_states[i]["opened"]))
+
+
+## 关着的房间内部涂黑。
+## 注意：必须放在"世界空间"里（Node2D + 高 z_index），
+## 之前挂在 CanvasLayer 上用的是屏幕坐标，位置和大小都会错。
 func _build_room_masks() -> void:
-	_room_mask_layer = CanvasLayer.new()
-	_room_mask_layer.name = "RoomMaskLayer"
-	_room_mask_layer.layer = 4
-	add_child(_room_mask_layer)
 	var holder := Node2D.new()
-	holder.name = "Masks"
-	_room_mask_layer.add_child(holder)
+	holder.name = "RoomMasks"
+	holder.z_index = 40
+	add_child(holder)
 	for state in _room_states:
 		var rect: Rect2i = state["rect"]
 		var mask := ColorRect.new()
+		mask.name = "Mask"
 		mask.color = Color(0, 0, 0, 1)
 		mask.position = Vector2(rect.position) * float(ArenaGen.TILE_SIZE)
 		mask.size = Vector2(rect.size) * float(ArenaGen.TILE_SIZE)
@@ -1835,31 +1907,56 @@ func _build_room_door_bodies() -> void:
 		_room_door_bodies.append(shapes)
 
 
-## 屏幕下方的「时钟 + 5.0S」提示（只在按住交互键时出现）
+## 门口的「按住 E 交互」提示（仿中间地图的头顶提示）+ 玩家头顶的时钟倒计时
 func _build_room_interact_ui() -> void:
-	_room_ui_layer = CanvasLayer.new()
-	_room_ui_layer.name = "RoomInteractLayer"
-	_room_ui_layer.layer = 6
-	add_child(_room_ui_layer)
-	var holder := Node2D.new()
-	holder.name = "Clock"
-	_room_ui_layer.add_child(holder)
+	# ① 每个房间门口一个提示，靠近才显示
+	_door_prompts.clear()
+	for state in _room_states:
+		var prompt := Label.new()
+		prompt.name = "DoorPrompt"
+		prompt.z_index = 80          # 盖在黑幕（z 40）之上，不然上方开门时提示会被挡
+		prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		prompt.add_theme_font_size_override("font_size", room_prompt_font_size)
+		prompt.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
+		prompt.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+		prompt.add_theme_constant_override("outline_size", 2)
+		var cells: Array = state["door_cells"]
+		var center := Vector2.ZERO
+		for cell in cells:
+			center += cell_to_world(cell)
+		center /= float(maxi(cells.size(), 1))
+		prompt.position = center + room_prompt_offset
+		prompt.size = Vector2(80.0, 18.0)
+		prompt.visible = false
+		add_child(prompt)
+		_door_prompts.append(prompt)
+
+	# ② 时钟 + 倒计时挂在玩家头顶（跟着角色走，不和关卡目标抢位置）
 	_room_clock_icon = Sprite2D.new()
+	_room_clock_icon.name = "RoomClockIcon"
+	_room_clock_icon.z_index = 80
 	var atlas := AtlasTexture.new()
 	atlas.atlas = load("res://resources/texture/道具ui.png")
 	atlas.region = Rect2(0, 0, 16, 16)
 	_room_clock_icon.texture = atlas
-	_room_clock_icon.scale = Vector2(2.5, 2.5)
+	_room_clock_icon.scale = Vector2(1.1, 1.1)
+	_room_clock_icon.position = room_clock_offset
 	_room_clock_icon.visible = false
-	holder.add_child(_room_clock_icon)
+	player.add_child(_room_clock_icon)
+
 	_room_clock_label = Label.new()
+	_room_clock_label.name = "RoomClockLabel"
+	_room_clock_label.z_index = 80
 	var font := load("res://resources/font/IPix.ttf") as Font
 	if font != null:
 		_room_clock_label.add_theme_font_override("font", font)
-	_room_clock_label.add_theme_font_size_override("font_size", 26)
+	_room_clock_label.add_theme_font_size_override("font_size", room_prompt_font_size)
 	_room_clock_label.add_theme_color_override("font_color", Color(1, 0.95, 0.7, 1))
+	_room_clock_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_room_clock_label.add_theme_constant_override("outline_size", 2)
+	_room_clock_label.position = room_clock_text_offset
 	_room_clock_label.visible = false
-	holder.add_child(_room_clock_label)
+	player.add_child(_room_clock_label)
 
 
 ## 房间里的道具：直接摆在地上，玩家走过去就能拿
@@ -1871,6 +1968,10 @@ func _spawn_room_pickup(cell: Vector2i) -> void:
 	pickup.config = config
 	add_child(pickup)
 	pickup.global_position = cell_to_world(cell)
+	# 房间里摆的道具不消失（场景默认 5 秒自毁，玩家开门前就没了）
+	if pickup.lifetime_timer != null:
+		pickup.lifetime_timer.stop()
+		pickup.is_expiring = false
 
 
 ## 房间里的临时友方：外形用队友、2 血、伤害固定 2、射速按住持枪敌人；
@@ -1879,9 +1980,10 @@ func _spawn_temp_ally(cell: Vector2i) -> void:
 	var ally = AllyScene.instantiate()
 	add_child(ally)
 	var body := player.get_node_or_null("BodySprite") as AnimatedSprite2D
-	# setup 的第二个参数要拿玩家自己的 SpriteFrames（队友共用本体动画），
-	# 所以这里照常传玩家；"守在箱子附近"通过每帧把守卫点指到箱子实现
-	ally.setup(player, body, TEMP_ALLY_DAMAGE, TEMP_ALLY_FIRE_INTERVAL, enemy_container)
+	# 第一个参数是"跟着谁"：这里传箱子，队友就不会先跑向玩家再折回来了；
+	# 第二个参数仍传玩家的 BodySprite，用来共用本体动画
+	var follow_node: Node2D = _push_box if (_push_box != null and is_instance_valid(_push_box)) else player
+	ally.setup(follow_node, body, TEMP_ALLY_DAMAGE, TEMP_ALLY_FIRE_INTERVAL, enemy_container)
 	ally.global_position = cell_to_world(cell)
 	ally.fire_interval = TEMP_ALLY_FIRE_INTERVAL
 	ally.current_health = TEMP_ALLY_MAX_HEALTH
@@ -1916,6 +2018,8 @@ func _spawn_shooter_enemy_at(cell: Vector2i) -> void:
 
 ## 临时友方交互：靠近 + 按一次交互键 -> 弹出「带走 / 不带」；再按一次确认带走
 func _update_temp_ally_interaction() -> void:
+	if _temp_ally_dialogue != null and _temp_ally_dialogue.is_open():
+		return
 	if _temp_ally_candidates.is_empty():
 		return
 	var nearest := -1
@@ -1929,50 +2033,51 @@ func _update_temp_ally_interaction() -> void:
 			nearest_distance = distance
 			nearest = i
 	if nearest_distance > room_reach_cells:
-		_close_temp_ally_dialog()
 		return
 	if Input.is_action_just_pressed("interact"):
-		if _temp_ally_pick == nearest:
-			_recruit_temp_ally(nearest)
-		else:
-			_temp_ally_pick = nearest
-			_show_temp_ally_dialog()
+		_temp_ally_pick = nearest
+		_open_temp_ally_dialogue()
 
 
-func _show_temp_ally_dialog() -> void:
-	if _temp_ally_layer == null:
-		_temp_ally_layer = CanvasLayer.new()
-		_temp_ally_layer.name = "TempAllyDialogLayer"
-		_temp_ally_layer.layer = 6
-		add_child(_temp_ally_layer)
-		_temp_ally_label = Label.new()
-		var font := load("res://resources/font/IPix.ttf") as Font
-		if font != null:
-			_temp_ally_label.add_theme_font_override("font", font)
-		_temp_ally_label.add_theme_font_size_override("font_size", 22)
-		_temp_ally_label.add_theme_color_override("font_color", Color(1, 1, 0.85, 1))
-		_temp_ally_layer.add_child(_temp_ally_label)
-	_temp_ally_label.text = "带走这名队友？再按一次交互键带走，走开则不带走"
-	_temp_ally_label.visible = true
-	var size := get_viewport().get_visible_rect().size
-	_temp_ally_label.position = Vector2(size.x * 0.5 - 260.0, size.y - 108.0)
+## 弹出正式对话框：问玩家要不要带走这名临时队友（选"先不用"还能再来一次）
+func _open_temp_ally_dialogue() -> void:
+	if _temp_ally_dialogue == null:
+		_temp_ally_dialogue = DialogueBoxScript.new()
+		add_child(_temp_ally_dialogue)
+		_temp_ally_dialogue.option_selected.connect(_on_temp_ally_dialogue_option)
+		_temp_ally_dialogue.closed.connect(_on_temp_ally_dialogue_closed)
+	if player != null and is_instance_valid(player):
+		player.set_physics_process(false)          # 对话期间先别动、别开枪
+	_temp_ally_dialogue.show_dialogue("临时队友",
+		["要带走这名队友吗？", "带走后它会守在箱子附近；它只有 2 点生命，阵亡会引来持枪敌人。"],
+		["带走", "先不用"])
 
 
-func _close_temp_ally_dialog() -> void:
+func _on_temp_ally_dialogue_option(index: int) -> void:
+	if index == 0 and _temp_ally_pick >= 0 and _temp_ally_pick < _temp_ally_candidates.size():
+		_recruit_temp_ally(_temp_ally_pick)
 	_temp_ally_pick = -1
-	if _temp_ally_label != null:
-		_temp_ally_label.visible = false
+
+
+func _on_temp_ally_dialogue_closed() -> void:
+	_temp_ally_pick = -1
+	if player != null and is_instance_valid(player):
+		player.set_physics_process(true)
 
 
 func _recruit_temp_ally(index: int) -> void:
 	var ally = _temp_ally_candidates[index]
 	_temp_ally_candidates.remove_at(index)
-	_close_temp_ally_dialog()
 	if not is_instance_valid(ally):
 		return
 	ally.set_physics_process(true)
 	ally.set_state(ally.STATE_GUARD)
+	# 活动范围：以箱子为中心的 5x5 格正方形（半径 2 格 = 32 像素）
+	if _push_box != null and is_instance_valid(_push_box):
+		ally.set_leash(_push_box, float(TEMP_ALLY_LEASH_CELLS) * float(ArenaGen.TILE_SIZE),
+			TEMP_ALLY_RETURN_OFFSET)
 	_recruited_allies.append(ally)
+	_sync_box_temp_allies()
 	if debug_print:
 		print("[Battle] 带走临时友方，当前 %d 名" % _recruited_allies.size())
 
@@ -1993,7 +2098,14 @@ func _update_temp_ally_follow() -> void:
 	for ally in _recruited_allies:
 		if not is_instance_valid(ally) or bool(ally.is_dead):
 			continue
-		ally.debug_set_guard_point((_push_box as Node2D).global_position)
+	_sync_box_temp_allies()
+
+
+## 把"被带走的临时友方"列表交给箱子：它们在 5x5 范围内也算在推车
+func _sync_box_temp_allies() -> void:
+	if _push_box == null or not is_instance_valid(_push_box):
+		return
+	_push_box.temp_allies = _recruited_allies
 
 
 ## 超过 2 名之后，多出来的临时友方会自己跑出去（开门 / 探路 / 主动打）
@@ -2026,17 +2138,18 @@ func _apply_room_state(index: int) -> void:
 	for collider in shapes:
 		(collider as CollisionShape2D).disabled = opened
 	var mask := _room_masks[index] as ColorRect
-	# 只有"从没打开过的上锁房间"才盖黑幕
-	mask.visible = not opened and not bool(_room_ever_opened[index])
-	if opened:
-		_room_ever_opened[index] = true
+	# 门关着就把房间内部涂黑（用户要求：关上后门内渲染涂黑）
+	mask.visible = not opened
+	_update_room_spawn_marker(index, opened)
 
 
 ## 每帧：预生成附近房间的敌人 + 处理门的按住交互
 func _update_push_rooms(delta: float) -> void:
 	if _room_states.is_empty():
 		return
-	_prespawn_rooms_near_player()
+	if _temp_ally_dialogue != null and _temp_ally_dialogue.is_open():
+		return                                   # 队友对话开着时先不处理门
+	# 房间内容改成"玩家按下交互键的那一刻"才生成（见 _tick_room_interaction）
 	_tick_room_interaction(delta, Input.is_action_pressed("interact"))
 	_update_temp_ally_interaction()
 	_update_temp_ally_follow()
@@ -2046,6 +2159,7 @@ func _update_push_rooms(delta: float) -> void:
 ## 按住累计开门/关门；松开或离开就清零重来
 func _tick_room_interaction(delta: float, pressed: bool) -> void:
 	var target := _find_room_door_target()
+	_refresh_door_prompts(target)
 	if target != _room_interact_target:
 		_room_interact_target = target
 		for state in _room_states:
@@ -2058,12 +2172,28 @@ func _tick_room_interaction(delta: float, pressed: bool) -> void:
 		state["interact_left"] = room_interact_seconds
 		_set_room_clock_visible(false)
 		return
+	# 玩家按下交互键的那一刻就开始生成房间内容（敌人先不活动，开门后才敌对）
+	_spawn_room_content(target)
 	state["interact_left"] = maxf(float(state["interact_left"]) - delta, 0.0)
 	_set_room_clock_visible(true)
 	if float(state["interact_left"]) <= 0.0:
 		_toggle_room(target)
 		state["interact_left"] = room_interact_seconds
 		_set_room_clock_visible(false)
+
+
+## 门口提示：靠近的那道门显示「按住 E 开门 / 关门」，其它隐藏
+func _refresh_door_prompts(target: int) -> void:
+	for i in range(_door_prompts.size()):
+		var prompt := _door_prompts[i] as Label
+		if prompt == null:
+			continue
+		if i != target:
+			prompt.visible = false
+			continue
+		var state: Dictionary = _room_states[i]
+		prompt.text = "按住 E %s" % ("关门" if bool(state["opened"]) else "开门")
+		prompt.visible = true
 
 
 ## 找玩家脚边最近的门（超过 room_reach_cells 就返回 -1）
@@ -2103,23 +2233,7 @@ func _toggle_room(index: int) -> void:
 			index, "打开" if will_open else "关上", String(state["content"])])
 
 
-## 玩家离房间够近就把里面的敌人先生成出来（但先不活动、不敌对）
-func _prespawn_rooms_near_player() -> void:
-	if player == null or not is_instance_valid(player):
-		return
-	for i in range(_room_states.size()):
-		var state: Dictionary = _room_states[i]
-		if bool(state["spawned"]):
-			continue
-		var rect: Rect2i = state["rect"]
-		var center := Vector2(rect.position) + Vector2(rect.size) * 0.5
-		var player_cell := player.global_position / float(ArenaGen.TILE_SIZE)
-		var distance := (player_cell - center).length()
-		if distance <= room_prespawn_cells + float(maxi(rect.size.x, rect.size.y)) * 0.5:
-			_spawn_room_content(i)
-
-
-## 房间里刷内容：敌人（道具 / 临时队友在第 4 块补上）
+## 玩家按下交互键 / 开门时把房间内容摆出来（敌人先静止，门开了再激活）
 func _spawn_room_content(index: int) -> void:
 	var state: Dictionary = _room_states[index]
 	if bool(state["spawned"]):
@@ -2191,7 +2305,9 @@ func _expel_player_from_door(state: Dictionary) -> void:
 	var door_cells: Array = state["door_cells"]
 	var rect: Rect2i = state["rect"]
 	var player_cell := arena_cell_at(player.global_position)
-	if not door_cells.has(player_cell):
+	# 关上门后房间内部会被涂黑，所以站在房间里的人也要被请出去
+	var inside_room := rect.has_point(player_cell)
+	if not door_cells.has(player_cell) and not inside_room:
 		return
 	# 判断玩家该往房间内挤还是往外挤：看门格相对房间中心的方向
 	var room_center := Vector2(rect.position) + Vector2(rect.size) * 0.5
@@ -2206,7 +2322,10 @@ func _expel_player_from_door(state: Dictionary) -> void:
 		var step_y := 1 if outward.y < 0.0 else -1
 		inside_target = player_cell + Vector2i(0, -step_y)
 		outside_target = player_cell + Vector2i(0, step_y)
-	if _is_walkable_cell(inside_target):
+	# 在房间内部时优先往外挤（否则关门后玩家会被黑幕盖住看不见）
+	if inside_room and _is_walkable_cell(outside_target):
+		player.global_position = cell_to_world(outside_target)
+	elif _is_walkable_cell(inside_target):
 		player.global_position = cell_to_world(inside_target)
 	elif _is_walkable_cell(outside_target):
 		player.global_position = cell_to_world(outside_target)
@@ -2228,7 +2347,7 @@ func arena_cell_at(world_position: Vector2) -> Vector2i:
 		int(floor(world_position.y / float(ArenaGen.TILE_SIZE))))
 
 
-## 时钟 + 倒计时的显隐与位置
+## 玩家头顶的时钟 + 倒计时（跟着角色走）
 func _set_room_clock_visible(visible_now: bool) -> void:
 	if _room_clock_icon == null or _room_clock_label == null:
 		return
@@ -2236,11 +2355,19 @@ func _set_room_clock_visible(visible_now: bool) -> void:
 	_room_clock_label.visible = visible_now
 	if not visible_now:
 		return
-	var size := get_viewport().get_visible_rect().size
-	_room_clock_icon.position = Vector2(size.x * 0.5 - 46.0, size.y - 64.0)
-	_room_clock_label.position = _room_clock_icon.position + Vector2(26.0, 3.0)
+	if _room_interact_target < 0 or _room_interact_target >= _room_states.size():
+		return
 	var state: Dictionary = _room_states[_room_interact_target]
 	_room_clock_label.text = "%.1fS" % maxf(float(state["interact_left"]), 0.0)
+	# 门在角色上方就让倒计时跑到角色下方，反之亦然（跟着遮挡自动换边）
+	var door_center := Vector2.ZERO
+	var door_cells: Array = state["door_cells"]
+	for cell in door_cells:
+		door_center += cell_to_world(cell)
+	door_center /= float(maxi(door_cells.size(), 1))
+	var door_above := door_center.y < player.global_position.y - 4.0
+	_room_clock_icon.position = room_clock_offset_below if door_above else room_clock_offset
+	_room_clock_label.position = room_clock_text_offset_below if door_above else room_clock_text_offset
 
 
 ## 推车关：把箱子放到起点 3x3，沿警戒线走
@@ -2254,6 +2381,8 @@ func _spawn_push_box() -> void:
 	_push_box = PushBoxScene.instantiate()
 	add_child(_push_box)
 	_push_box.setup(cells, player, enemy_container)
+	# 临时友方推车的范围和它们闲逛的范围保持一致
+	_push_box.ally_near_cells = TEMP_ALLY_LEASH_CELLS
 	_push_box.arrived.connect(_on_push_box_arrived)
 	_push_box.status_changed.connect(_on_push_box_status_changed)
 	_push_arrived = false

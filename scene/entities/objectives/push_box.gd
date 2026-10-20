@@ -19,11 +19,15 @@ const STATUS_BLOCKED := "blocked"
 const STATUS_ABANDONED := "abandoned"
 const STATUS_ARRIVED := "arrived"
 
-@export var base_step_seconds: float = 3.0
+@export var base_step_seconds: float = 2.0
 @export var ally_bonus_seconds: float = 0.5
 @export var ally_bonus_max: float = 1.0
-@export var player_near_cells: int = 8
-@export var enemy_near_cells: int = 8
+## 玩家要在箱子为中心的 3x3（周围一圈 8 格）内箱子才走
+@export var player_near_cells: int = 1
+## 敌人也进到这个 3x3 范围里箱子就停
+@export var enemy_near_cells: int = 1
+## 临时友方也能推箱子：它们在那个 5x5 活动范围内就算在推
+@export var ally_near_cells: int = 2
 @export var abandon_seconds: float = 20.0
 @export var back_speed_ratio: float = 0.5
 
@@ -34,11 +38,13 @@ var arrived_flag: bool = false
 
 var player_ref: Node2D = null
 var enemy_container: Node = null
+var temp_allies: Array = []          ## 被带走的临时友方（由 battle 塞进来）
 
 ## 当前位置用"浮点格号"表示：3.5 = 第 3 格走到一半
 var _progress: float = 0.0
 var _idle_time: float = 0.0
 var _last_index: int = 0
+var _blocked_latch: bool = false          ## 防抖：已经停了就别在边界上来回抖
 
 
 func setup(cells: Array[Vector2i], player: Node2D, enemies: Node) -> void:
@@ -85,11 +91,17 @@ func advance(delta: float) -> void:
 	if path.size() < 2 or arrived_flag:
 		return
 	var next_status := STATUS_FORWARD
-	if _enemy_near():
+	# 敌人范围用"进 8 格停、退到 9 格外才恢复"的迟滞，避免在边界上一步一抖
+	var enemy_distance := _nearest_enemy_distance()
+	if _blocked_latch and enemy_distance > float(enemy_near_cells) + 1.0:
+		_blocked_latch = false
+	elif enemy_distance <= float(enemy_near_cells):
+		_blocked_latch = true
+	if _blocked_latch:
 		# 敌人在范围内：箱子停住，但玩家计时照常走
 		next_status = STATUS_BLOCKED
 		_update_idle(delta)
-	elif not _player_near():
+	elif not _pusher_near():
 		_update_idle(delta)
 		if _idle_time >= abandon_seconds:
 			next_status = STATUS_ABANDONED
@@ -141,27 +153,39 @@ func _cell_center(cell: Vector2i) -> Vector2:
 	return Vector2(cell.x * TILE + TILE * 0.5, cell.y * TILE + TILE * 0.5)
 
 
-func _player_near() -> bool:
-	if player_ref == null or not is_instance_valid(player_ref):
-		return false
-	return _cell_distance(global_position, player_ref.global_position) <= float(player_near_cells)
-
-
-func _enemy_near() -> bool:
-	if enemy_container == null or not is_instance_valid(enemy_container):
-		return false
-	for child in enemy_container.get_children():
-		if not (child is Node2D) or not is_instance_valid(child):
+## 有没有人在推：玩家在 3x3 内，或者任何一名临时友方在 5x5 活动范围内
+func _pusher_near() -> bool:
+	if player_ref != null and is_instance_valid(player_ref) 			and _cell_distance(global_position, player_ref.global_position) <= float(player_near_cells):
+		return true
+	for ally in temp_allies:
+		if ally == null or not is_instance_valid(ally):
 			continue
-		if child is Enemy and bool((child as Enemy).is_dead):
+		if bool(ally.get("is_dead")):
 			continue
-		if _cell_distance(global_position, (child as Node2D).global_position) <= float(enemy_near_cells):
+		if _cell_distance(global_position, (ally as Node2D).global_position) <= float(ally_near_cells):
 			return true
 	return false
 
 
-## 方格距离（横竖斜都算一格）
+## 最近一只敌人的方格距离（没有敌人就返回一个很大的数）
+func _nearest_enemy_distance() -> float:
+	if enemy_container == null or not is_instance_valid(enemy_container):
+		return 9999.0
+	var nearest := 9999.0
+	for child in enemy_container.get_children():
+		# 只认真正的敌人（子弹、特效这些挂在同一个容器里的东西不算）
+		if not (child is Enemy):
+			continue
+		var enemy := child as Enemy
+		if not is_instance_valid(enemy) or enemy.is_dead:
+			continue
+		nearest = minf(nearest, _cell_distance(global_position, enemy.global_position))
+	return nearest
+
+
+## 瓦片距离：先换算成格子坐标再算，横向/纵向/斜向都算一格
+## （用格子下标算，玩家被箱子碰撞体顶开一点也还算是"贴着"）
 func _cell_distance(a: Vector2, b: Vector2) -> float:
-	var dx := absf(a.x - b.x) / float(TILE)
-	var dy := absf(a.y - b.y) / float(TILE)
-	return maxf(dx, dy)
+	var ca := Vector2i(int(floor(a.x / float(TILE))), int(floor(a.y / float(TILE))))
+	var cb := Vector2i(int(floor(b.x / float(TILE))), int(floor(b.y / float(TILE))))
+	return float(maxi(absi(ca.x - cb.x), absi(ca.y - cb.y)))

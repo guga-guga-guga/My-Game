@@ -90,6 +90,10 @@ var _repath_left := 0.0
 var _fire_cooldown := 0.0
 var _guard_point := Vector2.ZERO
 var _guard_repick_left := 0.0
+## 临时友方专用：活动范围（以某个节点为中心的正方形，单位像素，半径）
+var _leash_center: Node2D = null
+var _leash_radius: float = 0.0
+var _leash_return_offset: Vector2 = Vector2.ZERO   ## 出范围后往中心右侧哪儿靠
 var _speed_buff_mult := 1.0
 var _speed_buff_left := 0.0
 var _fire_buff_mult := 1.0
@@ -121,6 +125,15 @@ func _ready() -> void:
 	collision_layer = 2          # 和玩家同层：敌人的接触伤害/爆炸能打到它
 	collision_mask = WORLD_COLLISION_MASK
 	health_changed.emit(current_health, MAX_HEALTH)
+
+
+## 临时友方用：给它一个"活动范围"（以 center 为中心、半径 radius 像素的正方形）。
+## 在范围内随便走动；一旦要离开或已经离开，就自动往中心回来。
+func set_leash(center: Node2D, radius: float, return_offset: Vector2 = Vector2.ZERO) -> void:
+	_leash_center = center
+	_leash_radius = maxf(radius, 8.0)
+	_leash_return_offset = return_offset
+	_guard_repick_left = 0.0
 
 
 ## 玩家按 T 切换；从自主攻击切回保护会自己跑回玩家身边
@@ -273,14 +286,32 @@ func _update_stance(distance: float, delta: float) -> void:
 
 
 func _guard_goal(delta: float) -> Vector2:
+	var leash_center := _leash_center if (_leash_center != null and is_instance_valid(_leash_center)) else null
 	var to_player := _player.global_position - global_position
 	if to_player.length() > GUARD_RETURN_DISTANCE:
 		return _player.global_position                     # 离太远 -> 直接跑回去
+	# 有活动范围时：方框内闲逛（随机走 / 站着），出了方框就去箱子右侧一小段
+	if leash_center != null:
+		var offset := global_position - leash_center.global_position
+		if maxf(absf(offset.x), absf(offset.y)) > _leash_radius:
+			return leash_center.global_position + _leash_return_offset
 	_guard_repick_left = maxf(_guard_repick_left - delta, 0.0)
-	if _guard_repick_left <= 0.0 or global_position.distance_to(_guard_point) < 8.0:
-		_guard_repick_left = GUARD_REPICK_INTERVAL
-		var angle := randf() * TAU
-		_guard_point = _player.global_position + Vector2(cos(angle), sin(angle)) * randf_range(12.0, GUARD_RADIUS)
+	var reached := global_position.distance_to(_guard_point) < 8.0
+	if _guard_repick_left <= 0.0 or reached:
+		if leash_center != null:
+			# 闲逛模式：到了目标点有概率原地站一会儿，其余时候在方框内换一个随机点
+			if reached and randf() < 0.45:
+				_guard_point = global_position
+				_guard_repick_left = randf_range(0.6, 1.8)
+			else:
+				_guard_repick_left = randf_range(0.9, 2.2)
+				_guard_point = leash_center.global_position + Vector2(
+					randf_range(-_leash_radius, _leash_radius),
+					randf_range(-_leash_radius, _leash_radius))
+		else:
+			_guard_repick_left = GUARD_REPICK_INTERVAL
+			var angle := randf() * TAU
+			_guard_point = _player.global_position + Vector2(cos(angle), sin(angle)) * randf_range(12.0, GUARD_RADIUS)
 	return _guard_point
 
 

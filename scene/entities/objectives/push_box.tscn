@@ -7,6 +7,7 @@
 size = Vector2(20, 20)
 
 [node name="PushBox" type="AnimatableBody2D"]
+sync_to_physics = false
 script = ExtResource("1_box")
 
 [node name="Sprite" type="Sprite2D" parent="."]
