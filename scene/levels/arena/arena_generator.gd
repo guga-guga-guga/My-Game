@@ -60,6 +60,8 @@ const ROOM_DOOR_TILE := Vector2i(0, 0)
 const CELL_FLOOR := 0
 const CELL_WALL := 1
 const CELL_EDGE := 2
+## 空：既不铺地面也不铺墙（场外留空，视觉上是背景）
+const CELL_VOID := 3
 
 const TILE_SIZE := 16
 ## 生成尺寸硬约束 见方案 11.3:不改 WorldBounds 时上限 38x23 
@@ -92,23 +94,41 @@ const ROPE_PATH_WIDTH_MIN := 2                         ## 走廊宽度（格）
 const ROPE_PATH_WIDTH_MAX := 3
 const ROPE_DOOR_COUNT := 2                             ## 两头各一道红门
 
+## 推车关尺寸随层数成长（用户要求：层数越高地图越长）
+##   长边 = 60 + (层数-1) x 8，上限 96；短边 = 24 + (层数-1)，上限 34
+static func push_length_for_floor(floor_index: int) -> int:
+	return clampi(PUSH_LENGTH_MIN + (maxi(floor_index, 1) - 1) * 8, PUSH_LENGTH_MIN, PUSH_LENGTH_MAX)
+
+
+static func push_thickness_for_floor(floor_index: int) -> int:
+	return clampi(PUSH_THICKNESS_MIN + (maxi(floor_index, 1) - 1) * 2,
+		PUSH_THICKNESS_MIN, PUSH_THICKNESS_MAX)
+
+
 # ---- 推车关：宽路网（主路 + 岔路 + 回环）+ 道路两侧房间 ----
 ## 长边格数：警戒线长度 ≈ 长边长度，5 分钟倒计时 + 3 秒/格 => 上限约 80 格
 const PUSH_LENGTH_MIN := 60
-const PUSH_LENGTH_MAX := 80
-const PUSH_THICKNESS_MIN := 20                         ## 短边格数（塞得下房间即可）
-const PUSH_THICKNESS_MAX := 34
+const PUSH_LENGTH_MAX := 96
+const PUSH_THICKNESS_MIN := 36                         ## 短边格数（要同时放主路矩形 + 环路）
+const PUSH_THICKNESS_MAX := 52
 const PUSH_ROAD_WIDTH := 5                             ## 主路宽度（格）
 const PUSH_DETOUR_WIDTH := 4                           ## 岔路 / 回环宽度（格）
+const PUSH_RING_WIDTH := 2                             ## 环路（八边形绳子）宽度
+const PUSH_BRANCH_WIDTH := 3                           ## 支路（另一条街）的宽度
+const PUSH_TRUNK_WIDTH := 5                            ## 主干（主路）宽度：要保证警戒线两侧各 1 格以上
+const PUSH_BRANCH_MAX_WIDTH := 5                       ## 支路最宽 5 格（接口处固定 2 格）
+const PUSH_GAP_CELLS := 0                              ## 主路与环/支路之间不留墙（马路直接相交）
+const PUSH_RING_RADIUS_ALONG_MIN := 10                 ## 环路沿路方向的半径
+const PUSH_RING_RADIUS_ALONG_MAX := 22
 const PUSH_LOOP_COUNT_MIN := 2                         ## 回环数量
 const PUSH_LOOP_COUNT_MAX := 4
 const PUSH_BRANCH_COUNT_MIN := 4                       ## 岔路数量（用户要求支路多一些）
 const PUSH_BRANCH_COUNT_MAX := 7
 const PUSH_ROOM_ALONG_MIN := 5                         ## 房间尺寸（沿路方向 x 垂直方向）
 const PUSH_ROOM_ALONG_MAX := 9
-const PUSH_ROOM_ACROSS_MIN := 4
+const PUSH_ROOM_ACROSS_MIN := 3
 const PUSH_ROOM_ACROSS_MAX := 7
-const PUSH_ROOM_COUNT_MIN := 6                         ## 房间数量随地图大小浮动
+const PUSH_ROOM_COUNT_MIN := 4                         ## 房间数量随地图大小浮动
 const PUSH_ROOM_COUNT_MAX := 20
 const PUSH_DOORWAY_WIDTH_MIN := 1                      ## 房间门口宽度（格）
 const PUSH_DOORWAY_WIDTH_MAX := 3
@@ -118,7 +138,8 @@ const PUSH_RED_DOOR_ROOMS_MAX := 3                     ## 最多几个房间里�
 const TILE_FLOOR_GUARD := Vector2i(2, 1)
 
 
-func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL) -> Dictionary:
+func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL,
+		floor_index: int = 1) -> Dictionary:
 	var w := width
 	var h := height
 	if mode == MODE_PUSH:
@@ -145,7 +166,7 @@ func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL
 		h = clampi(height, MIN_HEIGHT, MAX_HEIGHT)
 	var last_reason := ""
 	for attempt in range(MAX_ATTEMPTS):
-		var data := _generate_once(w, h, rng_seed + attempt, mode)
+		var data := _generate_once(w, h, rng_seed + attempt, mode, floor_index)
 		if data.get("ok", false):
 			return _attach_ground_tiles(data, rng_seed + attempt)
 		last_reason = String(data.get("reason", ""))
@@ -312,7 +333,8 @@ func _paint_one_wear_patch(grid: Array, w: int, h: int, rng: RandomNumberGenerat
 		tiles[c.y * w + c.x] = TILE_FLOOR_BROKEN_HARD
 
 
-func _generate_once(w: int, h: int, rng_seed: int, mode: String = MODE_NORMAL) -> Dictionary:
+func _generate_once(w: int, h: int, rng_seed: int, mode: String = MODE_NORMAL,
+		floor_index: int = 1) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	if mode == MODE_BOSS:
@@ -320,7 +342,7 @@ func _generate_once(w: int, h: int, rng_seed: int, mode: String = MODE_NORMAL) -
 	if mode == MODE_ROPE:
 		return _generate_rope_arena(w, h, rng_seed)
 	if mode == MODE_PUSH:
-		return _generate_push_arena(w, h, rng_seed)
+		return _generate_push_arena(w, h, rng_seed, floor_index)
 	var grid: Array = []
 	grid.resize(w * h)
 	grid.fill(CELL_WALL)
@@ -566,9 +588,11 @@ func apply_to_layers(ground: TileMapLayer, overlay: TileMapLayer, data: Dictiona
 				ground.set_cell(cell, GROUND_SOURCE, floor_tile)
 			elif value == CELL_WALL:
 				ground.set_cell(cell, GROUND_SOURCE, WALL_TILES[absi(x * 7 + y * 13 + x * y) % WALL_TILES.size()])
-			else:
+			elif value == CELL_EDGE:
 				# 最外圈：坚固墙壁，把整张地图完整包住（红门已经改到场地内部）
 				ground.set_cell(cell, GROUND_SOURCE, TILE_WALL_SOLID)
+			else:
+				pass                      # CELL_VOID：场外留空，什么都不画
 	# 推车关的房间门：每格门口铺一块 16x16 动态门瓦片（第二层）
 	for room in data.get("rooms", []):
 		for door_cell in room.get("door_cells", []):
@@ -634,8 +658,10 @@ func to_ascii(data: Dictionary) -> String:
 				line += "."
 			elif grid[index] == CELL_WALL:
 				line += "X"
-			else:
+			elif grid[index] == CELL_EDGE:
 				line += "#"
+			else:
+				line += " "
 		text += line + "\n"
 	return text
 
@@ -963,16 +989,12 @@ func _rope_door_cell(grid: Array, w: int, h: int, horizontal: bool, step_index: 
 
 # ============================ 推车关地形 ============================
 
-## 推车关地形：宽路网（主路 + 岔路 + 回环）+ 道路两侧房间 + 一条警戒线轨道。
-## 规则：
-##   ① 主路宽 5 格，岔路/回环宽 4 格，玩家、箱子、敌人都转得开
-##   ② 只有一条警戒地板线路（1 格宽），沿主路中心线从起点 3x3 走到终点 3x3
-##   ③ 道路两侧挂房间，门口统一开在房间靠路的那面墙，宽度 1~3 格
-##   ④ 房间内容四选一各 25%（敌人/道具/队友/空），一半概率上锁
-##   ⑤ 上锁房间里的红门不刷怪（spawn_enabled = false）
-## 返回额外字段：push_path / push_start / push_end / push_start_area / push_end_area /
-##               push_guard_cells / rooms / rope_axis
-func _generate_push_arena(w: int, h: int, rng_seed: int) -> Dictionary:
+## 推车关地形（按用户示意图重写）：
+##   白色 = 主路：一条笔直横穿地图的大路，警戒线就压在这条路的中心线上
+##   蓝色 = 回环：坐落在主路上/下方的八边形环路，底边搭在主路上，能绕一圈回到原处
+##   黄色 = 支路：竖直的折线窄绳，从主路分出去、可以穿过主路一直伸到接近外墙
+## 其余：路两侧挂房间（上锁房随机内容 / 敞开房放红门），起终点各 3x3 警戒地板
+func _generate_push_arena(w: int, h: int, rng_seed: int, floor_index: int = 1) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	var horizontal := w >= h
@@ -985,106 +1007,129 @@ func _generate_push_arena(w: int, h: int, rng_seed: int) -> Dictionary:
 	grid.fill(CELL_WALL)
 	_seal_border(grid, w, h)
 
+	# 主路是一条"马路"：固定宽度（不再占短边 30%，那样整张图就是一块大长方形）
 	var road_half := int(float(PUSH_ROAD_WIDTH) / 2.0)
-	var across_min := road_half + 1
-	var across_max := thickness - 2 - road_half
-	if across_max <= across_min:
+	if thickness - 2 - road_half * 2 < 8:
 		return {"ok": false, "reason": "推车关短边太窄(%d)" % thickness}
+	var road_across := int(float(thickness) / 2.0)
 
-	# ---- ① 主路：一串路点，相邻路点用 L 形宽走廊连起来 ----
-	var waypoints: Array[Vector2i] = []
-	var across := clampi(int(float(thickness) / 2.0) + rng.randi_range(-3, 3), across_min, across_max)
-	waypoints.append(Vector2i(3, across))
+	# ---- ① 主干：分段水平前进 + 偶尔上下挪几格（树枝式道路的主干，宽 3 格）----
+	var trunk_half := int(float(PUSH_TRUNK_WIDTH) / 2.0)
+	var across := int(float(thickness) / 2.0)
 	var along := 3
-	while true:
-		along += rng.randi_range(14, 20)
-		if along > length - 4:
-			break
-		across = clampi(across + rng.randi_range(-4, 4), across_min, across_max)
-		waypoints.append(Vector2i(along, across))
-	waypoints.append(Vector2i(length - 4, across))
-	for i in range(waypoints.size() - 1):
-		_carve_push_segment(grid, w, h, horizontal, waypoints[i], waypoints[i + 1], PUSH_ROAD_WIDTH)
+	var trunk_cells: Array[Vector2i] = []
+	while along < length - 4:
+		var run := rng.randi_range(8, 16)
+		for _step in range(run):
+			if along >= length - 4:
+				break
+			trunk_cells.append(Vector2i(along, across))
+			along += 1
+		# 竖直挪一下（一格一格挪，保证相邻格永远只差 1）
+		var room_up := across - (2 + trunk_half)
+		var room_down := (thickness - 3 - trunk_half) - across
+		var dy := rng.randi_range(-3, 3)
+		dy = clampi(dy, -room_up, room_down)
+		if dy == 0:
+			continue
+		var step_dir := 1 if dy > 0 else -1
+		for _step in range(absi(dy)):
+			across += step_dir
+			trunk_cells.append(Vector2i(along - 1, across))
+	if trunk_cells.size() < 12:
+		return {"ok": false, "reason": "推车关主干太短(%d)" % trunk_cells.size()}
+	for cell in trunk_cells:
+		_push_fill(grid, w, h, horizontal, cell.x, cell.y - trunk_half, cell.x, cell.y + trunk_half)
+	# 房间可以挂在主干上，也可以挂在支路上（后面一起用）
+	var attach_points: Array[Vector2i] = []
+	for cell in trunk_cells:
+		attach_points.append(cell)
 
-	# ---- ② 警戒线：主路中心线的格序列（全图唯一一条轨道）----
+	# ---- ② 警戒线：走主干这条精确路径（相邻格只差 1）----
 	var path: Array[Vector2i] = []
-	for i in range(waypoints.size() - 1):
-		_append_push_line(path, horizontal, waypoints[i], waypoints[i + 1])
-	if path.size() < 4:
-		return {"ok": false, "reason": "推车关警戒线太短(%d)" % path.size()}
+	path.resize(0)
+	for cell in trunk_cells:
+		path.append(_rope_cell(horizontal, cell.x, cell.y))
 
+	# ---- ③ 树枝：从主干分出去的竖直支路（宽 3 格），部分支路再横向分小叉 ----
+	var branch_tips: Array[Vector2i] = []
+	var branch_count := rng.randi_range(PUSH_BRANCH_COUNT_MIN, PUSH_BRANCH_COUNT_MAX)
+	var branch_reach_max := clampi(10 + (maxi(floor_index, 1) - 1) * 2, 10, 26)
+	for _branch in range(branch_count):
+		var start_index := rng.randi_range(4, maxi(5, trunk_cells.size() - 5))
+		var start_cell: Vector2i = trunk_cells[start_index]
+		var branch_dir := -1 if rng.randf() < 0.5 else 1
+		var branch_across := start_cell.y
+		var branch_along := start_cell.x
+		# 支路宽度最宽 5 格；和主路交接的地方只开 2 格宽的"接口"，不要连通一大片
+		var branch_width := rng.randi_range(2, PUSH_BRANCH_MAX_WIDTH)
+		var neck_steps := 2
+		var steps := rng.randi_range(maxi(4, int(float(branch_reach_max) * 0.5)), branch_reach_max)
+		for _step in range(steps):
+			branch_across += branch_dir
+			if branch_across < 2 + trunk_half or branch_across > thickness - 3 - trunk_half:
+				break
+			var cell_width := 2 if _step < neck_steps else branch_width
+			var from_along := branch_along - int(float(cell_width) / 2.0)
+			_push_fill(grid, w, h, horizontal, from_along, branch_across,
+				from_along + cell_width - 1, branch_across)
+			attach_points.append(Vector2i(branch_along, branch_across))
+		# 末端小平台
+		_push_fill(grid, w, h, horizontal, branch_along - 1, branch_across - 1,
+			branch_along + 1, branch_across + 1)
+		branch_tips.append(Vector2i(branch_along, branch_across))
+		# 一半的支路再横向分一个小叉
+		if rng.randf() < 0.55:
+			var sub_dir := 1 if rng.randf() < 0.5 else -1
+			var sub_along := branch_along
+			for _sub in range(rng.randi_range(3, 6)):
+				sub_along = clampi(sub_along + sub_dir, 3 + trunk_half, length - 4 - trunk_half)
+				_push_fill(grid, w, h, horizontal, sub_along, branch_across - trunk_half,
+					sub_along, branch_across + trunk_half)
 
-	# ---- ⑤ 房间：沿警戒线每隔一段，在道路两侧找位置挂一个房间 ----
+	# ---- ④ 回环：把一条支路末端水平接到主干另一处，围出一块闭环 ----
+	if branch_tips.size() >= 1 and rng.randf() < 0.85:
+		var tip: Vector2i = branch_tips[0]
+		var walk_along := tip.x
+		var step_along := 1 if (tip.x + 12) < (length - 5) else -1
+		for _step in range(rng.randi_range(8, 14)):
+			walk_along = clampi(walk_along + step_along, 3 + trunk_half, length - 4 - trunk_half)
+			_push_fill(grid, w, h, horizontal, walk_along, tip.y - trunk_half,
+				walk_along, tip.y + trunk_half)
+		# 竖直接回主干
+		var walk_across := tip.y
+		var target_across := trunk_cells[clampi(int(float(trunk_cells.size()) / 2.0), 0, trunk_cells.size() - 1)].y
+		var step_across := 1 if target_across > walk_across else -1
+		while walk_across != target_across:
+			_push_fill(grid, w, h, horizontal, walk_along - trunk_half, walk_across,
+				walk_along + trunk_half, walk_across)
+			walk_across += step_across
+
+	# ---- ⑤ 房间：挂在主路两侧（撞到环路/支路就换位置）----
 	var rooms: Array[Dictionary] = []
 	var guard_cells: Array[Vector2i] = []
 	var room_count := clampi(int(float(length) / 8.0), PUSH_ROOM_COUNT_MIN, PUSH_ROOM_COUNT_MAX)
-	var across_space := thickness - 2 - (road_half + 2) - 2      # 单侧能塞下的房间进深上限
+	var across_space := thickness - 2 - (road_half + 2) - 2
 	if across_space < PUSH_ROOM_ACROSS_MIN:
 		return {"ok": false, "reason": "推车关短边塞不下房间(%d)" % thickness}
-	var room_stride := maxi(5, int(float(path.size()) / float(room_count + 1)))
+	var room_stride := maxi(4, int(float(attach_points.size()) / float(room_count + 1)))
 	var slot_index := room_stride
-	while slot_index < path.size() - 3 and rooms.size() < room_count:
-		var slot_cell: Vector2i = path[slot_index]
-		var wp := Vector2i(slot_cell.x, slot_cell.y) if horizontal else Vector2i(slot_cell.y, slot_cell.x)
-		# 上下左右四个方向都试着挂房间（左右方向是新加的）
+	while slot_index < attach_points.size() - 2 and rooms.size() < room_count:
+		var wp: Vector2i = attach_points[slot_index]
 		var dirs: Array[Vector2i] = [Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 0), Vector2i(-1, 0)]
 		for dir in dirs:
 			if rooms.size() >= room_count:
 				break
-			# 同一个位置换尺寸多试两次，转弯处放不下就往下一段走
-			for _attempt in range(2):
+			for _attempt in range(4):
 				if _push_try_room(grid, w, h, horizontal, length, thickness, road_half,
 						wp, dir, across_space, rng, rooms, guard_cells):
 					break
 		slot_index += room_stride
 	if rooms.size() < PUSH_ROOM_COUNT_MIN:
 		return {"ok": false, "reason": "推车关房间太少(%d)" % rooms.size()}
-
-	# 按"玩家遇到的先后顺序"给自然上锁的房间排队，第 3 个一定是临时队友房
 	_push_force_third_locked_ally_room(rooms, path)
 
-	# ---- ⑥ 回环：相隔较远的两段路之间再挖一条绕行线，形成环路（撞到房间就换一组）----
-	var room_rects: Array[Rect2i] = []
-	for room in rooms:
-		room_rects.append(room["rect"])
-	var loop_count := rng.randi_range(PUSH_LOOP_COUNT_MIN, PUSH_LOOP_COUNT_MAX)
-	var loops_done := 0
-	for _try in range(loop_count * 8):
-		if loops_done >= loop_count or waypoints.size() < 4:
-			break
-		var ai := rng.randi_range(0, waypoints.size() - 3)
-		var bi := rng.randi_range(ai + 2, waypoints.size() - 1)
-		var offset := rng.randi_range(road_half + 2, road_half + 4) * (1 if rng.randf() < 0.5 else -1)
-		var mid_across := clampi(int((waypoints[ai].y + waypoints[bi].y) / 2) + offset, across_min, across_max)
-		var mid := Vector2i(int((waypoints[ai].x + waypoints[bi].x) / 2), mid_across)
-		if not _push_segment_free(w, h, horizontal, waypoints[ai], mid, PUSH_DETOUR_WIDTH, room_rects):
-			continue
-		if not _push_segment_free(w, h, horizontal, mid, waypoints[bi], PUSH_DETOUR_WIDTH, room_rects):
-			continue
-		_carve_push_segment(grid, w, h, horizontal, waypoints[ai], mid, PUSH_DETOUR_WIDTH)
-		_carve_push_segment(grid, w, h, horizontal, mid, waypoints[bi], PUSH_DETOUR_WIDTH)
-		loops_done += 1
-
-	# ---- ⑦ 岔路：从主路分出去一条走廊，尽头挖一个小平台 ----
-	var branch_count := rng.randi_range(PUSH_BRANCH_COUNT_MIN, PUSH_BRANCH_COUNT_MAX)
-	var branches_done := 0
-	for _try in range(branch_count * 10):
-		if branches_done >= branch_count:
-			break
-		var branch_wp: Vector2i = waypoints[rng.randi_range(0, waypoints.size() - 1)]
-		var branch_side := 1 if rng.randf() < 0.5 else -1
-		var reach := rng.randi_range(5, 8)
-		var end_across := clampi(branch_wp.y + branch_side * (road_half + reach), across_min, across_max)
-		if end_across == branch_wp.y:
-			continue
-		if not _push_segment_free(w, h, horizontal, branch_wp, Vector2i(branch_wp.x, end_across),
-				PUSH_DETOUR_WIDTH, room_rects):
-			continue
-		_carve_push_segment(grid, w, h, horizontal, branch_wp, Vector2i(branch_wp.x, end_across), PUSH_DETOUR_WIDTH)
-		_push_fill(grid, w, h, horizontal, branch_wp.x - 2, end_across - 1, branch_wp.x + 2, end_across + 1)
-		branches_done += 1
-
-	# ---- ⑥ 红门：只放在房间里；上锁房间里的红门不刷怪 ----
+	# ---- ⑥ 红门：只放在未上锁的房间里 ----
 	var red_door_rooms: Array[int] = []
 	var order: Array[int] = []
 	for i in range(rooms.size()):
@@ -1095,16 +1140,16 @@ func _generate_push_arena(w: int, h: int, rng_seed: int) -> Dictionary:
 			break
 		var room: Dictionary = rooms[i]
 		if bool(room["locked"]):
-			continue                       # 红门只出现在未封闭（未上锁）的房间里
+			continue
 		var spot := _push_red_door_cell(grid, w, h, room["rect"], room["door_cells"])
 		if spot == Vector2i(-1, -1):
 			continue
 		room["red_door_cell"] = spot
-		room["spawn_enabled"] = true        # 敞开房间的红门正常刷怪
+		room["spawn_enabled"] = true
 		rooms[i] = room
 		red_door_rooms.append(i)
 
-	# ---- ⑦ 起点/终点：各 3x3 警戒地板 ----
+	# ---- ⑦ 起点 / 终点：各 3x3 警戒地板 ----
 	var start_center: Vector2i = path[0]
 	var end_center: Vector2i = path[path.size() - 1]
 	var start_area := _push_area_cells(grid, w, h, start_center)
@@ -1136,12 +1181,78 @@ func _generate_push_arena(w: int, h: int, rng_seed: int) -> Dictionary:
 		"push_guard_cells": guard_cells,
 		"rooms": rooms,
 	}
+	# 兜底：保证警戒线每一格的九宫格都是地面（用户硬要求）
+	_push_widen_path(grid, w, h, path)
+	# 兜底：把零碎的小地板缝回主体，避免地形生成因为连通性被打回
+	_push_connect_components(grid, w, h, horizontal)
+	# 薄墙化：离可走地面超过 3 格的墙改成"空"，场外留空（墙只有 1~3 格厚）
+	_push_thin_walls(grid, w, h)
+
 	if not _push_path_is_valid(grid, w, h, path):
-		return {"ok": false, "reason": "推车关警戒线不在可走地面上"}
+		var bad_cell := Vector2i(-1, -1)
+		for i in range(path.size()):
+			var cell: Vector2i = path[i]
+			if not _in_bounds(cell, w, h) or int(grid[cell.y * w + cell.x]) != CELL_FLOOR:
+				bad_cell = cell
+				break
+			if i > 0:
+				var prev: Vector2i = path[i - 1]
+				if absi(prev.x - cell.x) + absi(prev.y - cell.y) != 1:
+					bad_cell = cell
+					break
+		return {"ok": false, "reason": "推车关警戒线不合法（坏格 %s）" % str(bad_cell),
+			"grid": grid, "width": w, "height": h}
 	var comps := _floor_components(grid, w, h)
 	if comps != 1:
-		return {"ok": false, "reason": "推车关地面分成 %d 块（应该整张图连成一片）" % comps}
+		# 失败时也把 grid 带上，方便定位是哪一块没连上
+		return {"ok": false, "reason": "推车关地面分成 %d 块（应该整张图连成一片）" % comps,
+			"grid": grid, "width": w, "height": h}
 	return data
+
+
+## 挖一个八边形环路（宽度 2 格的绳子）
+func _carve_push_ring(grid: Array, w: int, h: int, horizontal: bool,
+		center_along: int, center_across: int, radius_along: int, radius_across: int) -> void:
+	var steps := maxi(32, (radius_along + radius_across) * 4)
+	for i in range(steps):
+		var t := TAU * float(i) / float(steps)
+		var ca := cos(t)
+		var sa := sin(t)
+		# 超椭圆（p=4）近似八边形
+		var denom := pow(pow(absf(ca), 4.0) + pow(absf(sa), 4.0), 0.25)
+		if denom <= 0.0001:
+			continue
+		var along := center_along + int(round(float(radius_along) * ca / denom))
+		var across := center_across + int(round(float(radius_across) * sa / denom))
+		_push_fill(grid, w, h, horizontal, along, across, along + PUSH_RING_WIDTH - 1,
+			across + PUSH_RING_WIDTH - 1)
+
+
+## 挖一条竖直折线支路（宽 2 格的绳子），允许左右抖
+func _carve_push_branch(grid: Array, w: int, h: int, horizontal: bool, along_start: int,
+		across_start: int, dir: int, steps: int, rng: RandomNumberGenerator) -> void:
+	var along := along_start
+	var across := across_start
+	var jog := 0
+	var max_along := (w - 4) if horizontal else (h - 4)
+	var max_across := (h - 3) if horizontal else (w - 3)
+	var last_along := along
+	var last_across := across
+	for step_index in range(steps):
+		if jitter_should_jog(step_index):
+			jog = rng.randi_range(-1, 1)
+		var draw_along := clampi(along + jog, 2, max_along)
+		if across < 2 or across > max_across:
+			break
+		_push_fill(grid, w, h, horizontal, draw_along, across, draw_along + 1, across)
+		last_along = draw_along
+		last_across = across
+		across += dir
+	# 尽头小平台紧贴真正画到的最后一格（否则会留下孤立方块）
+	_push_fill(grid, w, h, horizontal, last_along - 1, last_across - 1, last_along + 2, last_across + 1)
+
+func jitter_should_jog(step_index: int) -> bool:
+	return step_index % 3 == 2
 
 
 ## 自然上锁（进关卡时就锁着）的房间按警戒线上的先后排序，第 3 个改成临时队友房。
@@ -1190,8 +1301,6 @@ func _push_room_path_index(room: Dictionary, path: Array[Vector2i]) -> int:
 			best_index = i
 	return best_index
 
-
-## 在 (沿路, 垂直) 坐标系里填一块矩形（含端点），不会碰最外圈墙
 func _push_fill(grid: Array, w: int, h: int, horizontal: bool, a0: int, c0: int, a1: int, c1: int) -> void:
 	for a in range(mini(a0, a1), maxi(a0, a1) + 1):
 		for c in range(mini(c0, c1), maxi(c0, c1) + 1):
@@ -1361,7 +1470,8 @@ func _push_try_room(grid: Array, w: int, h: int, horizontal: bool, length: int, 
 				a0 = a1 - ra + 1
 		if a0 < 2 or a1 > length - 3 or c0 < 2 or c1 > thickness - 3:
 			continue
-		if not _push_rect_is_wall(grid, w, h, horizontal, a0 - 1, c0 - 1, a1 + 1, c1 + 1):
+		# 只要求房间本身还是墙；房间四周的墙下面会"重新砌一遍"，保证房间不会和路连通
+		if not _push_rect_is_wall(grid, w, h, horizontal, a0, c0, a1, c1):
 			continue
 		_push_fill(grid, w, h, horizontal, a0, c0, a1, c1)
 
@@ -1383,8 +1493,39 @@ func _push_try_room(grid: Array, w: int, h: int, horizontal: bool, length: int, 
 				door_cells.append(cell2)
 		if door_cells.is_empty():
 			continue
+		# 门口朝路的一侧再挖最多 3 格，保证一定接上真实路面
+		# （房间可能挂在主路、也可能挂在支路上，两者宽度不同，接口位置会有偏差）
+		for door_cell in door_cells:
+			var probe_a := 0
+			var probe_c := 0
+			if dir.y != 0:
+				probe_a = door_cell.x if horizontal else door_cell.y
+				probe_c = door_cell.y if horizontal else door_cell.x
+			else:
+				probe_a = door_cell.x if horizontal else door_cell.y
+				probe_c = door_cell.y if horizontal else door_cell.x
+			for _step in range(1, 4):
+				probe_a -= dir.x
+				probe_c -= dir.y
+				var probe_cell := _rope_cell(horizontal, probe_a, probe_c)
+				if probe_cell.x <= 1 or probe_cell.y <= 1 						or probe_cell.x >= w - 2 or probe_cell.y >= h - 2:
+					break
+				if int(grid[probe_cell.y * w + probe_cell.x]) == CELL_FLOOR:
+					break                    # 已经接上路面了
+				grid[probe_cell.y * w + probe_cell.x] = CELL_FLOOR
 		for door_cell in door_cells:
 			guard_cells.append(door_cell)
+		# 把房间四周重新砌一圈墙（门口那几格留空），保证房间不会和外面的路连成一片
+		for ring_a in range(a0 - 1, a1 + 2):
+			for ring_c in range(c0 - 1, c1 + 2):
+				if ring_a >= a0 and ring_a <= a1 and ring_c >= c0 and ring_c <= c1:
+					continue
+				var ring_cell := _rope_cell(horizontal, ring_a, ring_c)
+				if ring_cell.x <= 1 or ring_cell.y <= 1 						or ring_cell.x >= w - 2 or ring_cell.y >= h - 2:
+					continue
+				if door_cells.has(ring_cell):
+					continue
+				grid[ring_cell.y * w + ring_cell.x] = CELL_WALL
 
 		# 上锁房间才随机那 4 种内容（敌人/道具/队友/空，各 25%）；
 		# 未上锁的敞开房间只放红门，不放这些内容（用户规则）
@@ -1441,3 +1582,118 @@ func _push_rect_from_bounds(horizontal: bool, a0: int, c0: int, a1: int, c1: int
 	if not horizontal:
 		size = Vector2i(across_span, along_span)
 	return Rect2i(origin, size)
+
+
+## 把所有孤立的零碎地板用 1 格宽的小通道缝回最大那块（生成完地形后兜底）
+func _push_connect_components(grid: Array, w: int, h: int, horizontal: bool) -> void:
+	for _guard in range(8):
+		var labels := _push_label_components(grid, w, h)
+		if labels.size() <= 1:
+			return
+		# 找最大的一块当主体
+		var main_index := 0
+		var main_size := -1
+		for i in range(labels.size()):
+			var size: int = (labels[i]["cells"] as Array).size()
+			if size > main_size:
+				main_size = size
+				main_index = i
+		var main_cells: Array = labels[main_index]["cells"]
+		for i in range(labels.size()):
+			if i == main_index:
+				continue
+			var cells: Array = labels[i]["cells"]
+			if cells.is_empty():
+				continue
+			# 找距离最近的一对格子，挖一条 L 形通道把它们接起来
+			var best_a: Vector2i = cells[0]
+			var best_b: Vector2i = main_cells[0]
+			var best_distance := -1
+			for ca in cells:
+				for cb in main_cells:
+					var distance: int = absi(ca.x - cb.x) + absi(ca.y - cb.y)
+					if best_distance < 0 or distance < best_distance:
+						best_distance = distance
+						best_a = ca
+						best_b = cb
+			var step_x := 1 if best_b.x >= best_a.x else -1
+			var walk_x := best_a.x
+			while walk_x != best_b.x:
+				_push_fill(grid, w, h, horizontal, walk_x, best_a.y, walk_x, best_a.y)
+				walk_x += step_x
+			var step_y := 1 if best_b.y >= best_a.y else -1
+			var walk_y := best_a.y
+			while walk_y != best_b.y:
+				_push_fill(grid, w, h, horizontal, best_b.x, walk_y, best_b.x, walk_y)
+				walk_y += step_y
+
+
+## 给每块地板打标签（返回 [{cells: Array}, ...]）
+func _push_label_components(grid: Array, w: int, h: int) -> Array[Dictionary]:
+	var seen := {}
+	var out: Array[Dictionary] = []
+	for y in range(h):
+		for x in range(w):
+			var start := Vector2i(x, y)
+			if int(grid[y * w + x]) != CELL_FLOOR or seen.has(start):
+				continue
+			var cells: Array[Vector2i] = []
+			var queue: Array[Vector2i] = [start]
+			seen[start] = true
+			while not queue.is_empty():
+				var cell: Vector2i = queue.pop_front()
+				cells.append(cell)
+				for dir in FOUR_DIRS:
+					var next: Vector2i = cell + dir
+					if not _in_bounds(next, w, h):
+						continue
+					if seen.has(next) or int(grid[next.y * w + next.x]) != CELL_FLOOR:
+						continue
+					seen[next] = true
+					queue.append(next)
+			out.append({"cells": cells})
+	return out
+
+
+## 薄墙化：离可走地面超过 3 格的墙格改成 CELL_VOID（不画瓦片）。
+## 这样地图上只剩 1~3 格厚的墙体轮廓，其余是场外留空，不会出现大片实心墙。
+func _push_thin_walls(grid: Array, w: int, h: int) -> void:
+	const MAX_THICKNESS := 3
+	var near := {}
+	var queue: Array[Vector2i] = []
+	for y in range(h):
+		for x in range(w):
+			if int(grid[y * w + x]) == CELL_FLOOR:
+				var cell := Vector2i(x, y)
+				near[cell] = 0
+				queue.append(cell)
+	while not queue.is_empty():
+		var cell2: Vector2i = queue.pop_front()
+		var dist: int = int(near[cell2])
+		if dist >= MAX_THICKNESS:
+			continue
+		for dir in FOUR_DIRS:
+			var next: Vector2i = cell2 + dir
+			if not _in_bounds(next, w, h) or near.has(next):
+				continue
+			near[next] = dist + 1
+			queue.append(next)
+	for y in range(h):
+		for x in range(w):
+			var value: int = int(grid[y * w + x])
+			if value != CELL_WALL:
+				continue                     # 外圈边界墙（CELL_EDGE）保持不动
+			if not near.has(Vector2i(x, y)):
+				grid[y * w + x] = CELL_VOID
+
+
+## 保证警戒线（警戒地板）每一格周围 3x3 全是地面：
+## 把线路上每格为中心的九宫格都填成地板，箱子/玩家推车时不会被挤在单格通道里。
+func _push_widen_path(grid: Array, w: int, h: int, path: Array[Vector2i]) -> void:
+	for cell in path:
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var target := Vector2i(cell.x + int(dx), cell.y + int(dy))
+				if target.x <= 0 or target.y <= 0 or target.x >= w - 1 or target.y >= h - 1:
+					continue
+				grid[target.y * w + target.x] = CELL_FLOOR

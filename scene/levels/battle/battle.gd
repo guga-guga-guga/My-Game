@@ -50,9 +50,9 @@ const HUD_ICON_SIZE := 48.0
 ## 绳子场地（新模式地基）：长边 / 短边格数，只在模式跑到 rope 时才用
 @export var arena_rope_length: int = 72
 @export var arena_rope_thickness: int = 16
-## 推车关：长边 / 短边格数（长边≈警戒线长度，受 5 分钟倒计时约束，默认 72x24）
-@export var arena_push_length: int = 72
-@export var arena_push_thickness: int = 24
+## 推车关：长边 / 短边格数；填 0 = 按层数自动成长（60+(层-1)*8，上限 96）
+@export var arena_push_length: int = 0
+@export var arena_push_thickness: int = 0
 
 @export_group("推车关房间")
 ## 按住交互键多久开门 / 关门（用户要求 3 秒）
@@ -224,9 +224,15 @@ func _ready() -> void:
 		arena_w = arena_rope_length
 		arena_h = arena_rope_thickness
 	elif arena_mode == ArenaGen.MODE_PUSH:
-		arena_w = arena_push_length
-		arena_h = arena_push_thickness
-	arena_data = generator.generate(arena_w, arena_h, use_seed, arena_mode)
+		var push_floor := maxi(_context_floor(), 1)
+		arena_w = arena_push_length if arena_push_length > 0 else ArenaGen.push_length_for_floor(push_floor)
+		arena_h = arena_push_thickness if arena_push_thickness > 0 else ArenaGen.push_thickness_for_floor(push_floor)
+	arena_data = generator.generate(arena_w, arena_h, use_seed, arena_mode, maxi(_context_floor(), 1))
+	if goal["type"] == LevelGoal.TYPE_PUSH:
+		_apply_push_time_limit()
+		if debug_print:
+			print("[Battle] 推车关地形预览（# 外墙 X 墙 . 地板 D 红门 P 出生点）")
+			print(generator.to_ascii(arena_data))
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
 	player.global_position = cell_to_world(arena_data["player_spawn"])
@@ -2368,6 +2374,17 @@ func _set_room_clock_visible(visible_now: bool) -> void:
 	var door_above := door_center.y < player.global_position.y - 4.0
 	_room_clock_icon.position = room_clock_offset_below if door_above else room_clock_offset
 	_room_clock_label.position = room_clock_text_offset_below if door_above else room_clock_text_offset
+
+
+## 推车关限时按警戒线长度自动算：格数 x 每格 2 秒 x 1.4 余量，最少 180 秒
+func _apply_push_time_limit() -> void:
+	var cells := maxi((arena_data.get("push_path", []) as Array).size() - 1, 1)
+	var limit := maxf(LevelGoal.PUSH_DURATION_MIN, float(cells) * 2.0 * 1.4)
+	goal["time_limit"] = limit
+	stage_duration = limit
+	stage_time_left = limit
+	if debug_print:
+		print("[Battle] 推车关限时 %.0f 秒（警戒线 %d 格）" % [limit, cells])
 
 
 ## 推车关：把箱子放到起点 3x3，沿警戒线走

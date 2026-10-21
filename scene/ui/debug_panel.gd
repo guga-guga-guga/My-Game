@@ -222,20 +222,6 @@ func _build_debug_level_row() -> void:
 	_selectable.append({"kind": "debug_level", "key": "debug_level", "deltas": [],
 			"buttons": [level_button], "control": level_box})
 
-	# 「推车关」：一键直接进推车关（第 3 层），不用再点开调试菜单
-	var push_button := Button.new()
-	push_button.name = "PushLevelButton"
-	push_button.text = "推车关"
-	push_button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	push_button.custom_minimum_size = Vector2(150.0, 36.0)
-	push_button.focus_mode = Control.FOCUS_NONE
-	push_button.add_theme_font_size_override("font_size", FONT_ROW)
-	push_button.pressed.connect(_on_push_level_button_pressed)
-	level_box.add_child(push_button)
-
-	_selectable.append({"kind": "push_level", "key": "push_level", "deltas": [],
-			"buttons": [push_button], "control": level_box})
-
 
 func open_panel() -> void:
 	if not _enabled or _open:
@@ -522,15 +508,6 @@ func _hire_ally() -> void:
 	elif not RunState.hire_ally():
 		print("[DebugPanel] 队友已满（最多 %d 个）" % RunState.MAX_ALLIES)
 	_refresh_all()
-
-
-## 点「推车关」：直接开一局推车关（第 3 层，程序化推车地形）
-func _on_push_level_button_pressed() -> void:
-	if not _enabled:
-		return
-	if _open:
-		close_panel()
-	debug_start_level("push")
 
 
 func _on_debug_menu_button_pressed() -> void:
