@@ -562,6 +562,16 @@ func debug_start_level(level_id: String) -> void:
 		"push":
 			print("[DebugPanel] 调试: 进推车关（第 3 层）")
 			GameFlow.start_battle(debug_build_push_level())
+		"maze":
+			print("[DebugPanel] 调试: 进迷宫关（第 3 层）")
+			RunState.reset()
+			RunState.floor_index = 3
+			GameFlow.start_battle({"floor": 3, "node_type": "maze"})
+		"defend":
+			print("[DebugPanel] 调试: 进守护关（第 6 层）")
+			RunState.reset()
+			RunState.floor_index = 6
+			GameFlow.start_battle({"floor": 6, "node_type": "defend"})
 		"boss_floor10":
 			print("[DebugPanel] 调试: 进第 10 层三重 BOSS 关")
 			RunState.reset()

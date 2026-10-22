@@ -48,6 +48,8 @@ var spiral_phase: float =0.0
 @export var max_health: int = 3
 ## 受伤后的无敌时长（用户要求：延长到 1.5 秒；期间免疫一切伤害并闪烁提示）
 @export var invincibility_duration: float = 1.5
+## 完全免疫伤害（守护关的建造模式下打开，退出建造模式就关掉）
+@export var damage_immune: bool = false
 
 #玩家当前生命，由最大生命值初始化
 var current_health: int = 0
@@ -125,6 +127,8 @@ func _update_facing(move_input: Vector2, shoot_input: Vector2) -> void:
 func apply_damage(amount: int) -> bool:
 	if is_dead:
 		return false
+	if damage_immune:
+		return false                      # 建造模式下完全免疫伤害（守护关用）
 	if amount <= 0:  
 		return false
 	if invincibility_time_left > 0.0:

@@ -20,6 +20,7 @@ const TYPE_CLEAR_WAVES := "clear_waves"
 const TYPE_BOSS := "boss"
 const TYPE_DEFEND := "defend"
 const TYPE_PUSH := "push"
+const TYPE_MAZE := "maze"
 
 ## 守护关固定时长（秒）
 const DEFEND_DURATION := 120.0
@@ -44,6 +45,8 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 			type = TYPE_DEFEND
 		elif node_type == "push":
 			type = TYPE_PUSH
+		elif node_type == "maze":
+			type = TYPE_MAZE
 		elif node_type == "elite":
 			type = TYPE_KILL
 		else:
@@ -98,6 +101,10 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 		goal["time_limit"] = DEFEND_DURATION
 		goal["conditions"].append({"type": TYPE_SURVIVE, "target": DEFEND_DURATION, "label": "撑满 %.0f 秒" % DEFEND_DURATION})
 		goal["conditions"].append({"type": TYPE_DEFEND, "target": 1, "label": "守护对象存活"})
+
+	elif type == TYPE_MAZE:
+		# 迷宫关：走出迷宫即通关；没有硬限时（失败只有被岩浆烧死）
+		goal["conditions"].append({"type": TYPE_MAZE, "target": 1, "label": "走出迷宫"})
 
 	elif type == TYPE_PUSH:
 		# 推车关：5 分钟内把箱子推到终点（超时或玩家死亡判负）
@@ -158,6 +165,8 @@ static func progress_text(goal: Dictionary, state: Dictionary) -> String:
 				parts.append("守护对象存活")
 			else:
 				parts.append("守护对象阵亡")
+		elif type == TYPE_MAZE:
+			parts.append("已用 %.0f 秒" % float(state.get("maze_elapsed", 0.0)))
 		elif type == TYPE_PUSH:
 			parts.append("箱子 %d / %d 格" % [
 				int(state.get("push_progress", 0)), int(state.get("push_total", 0))])
@@ -190,6 +199,9 @@ static func is_satisfied(goal: Dictionary, state: Dictionary) -> bool:
 		elif type == TYPE_PUSH:
 			if not bool(state.get("push_arrived", false)):
 				return false
+		elif type == TYPE_MAZE:
+			if not bool(state.get("maze_exited", false)):
+				return false
 	return true
 
 
@@ -204,7 +216,7 @@ static func is_timed_out(goal: Dictionary, state: Dictionary) -> bool:
 
 ## 是否是合法的目标类型 build 的强制参数校验用 
 static func is_valid_type(type: String) -> bool:
-	return type == TYPE_SURVIVE or type == TYPE_KILL or type == TYPE_CLEAR_WAVES or type == TYPE_BOSS 		or type == TYPE_DEFEND or type == TYPE_PUSH
+	return type == TYPE_SURVIVE or type == TYPE_KILL or type == TYPE_CLEAR_WAVES or type == TYPE_BOSS 		or type == TYPE_DEFEND or type == TYPE_PUSH or type == TYPE_MAZE
 
 ## 简短目标描述（路线图按钮上显示，不带"目标:"前缀和限时后缀）
 static func short_label(goal: Dictionary) -> String:

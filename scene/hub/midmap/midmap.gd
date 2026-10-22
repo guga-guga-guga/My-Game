@@ -39,7 +39,8 @@ const KIND_COLORS := {
 	"shop": Color(1.0, 0.95, 0.55),        # 商店：偏金光（图形用玩家形象）
 	"boss": Color(1.0, 0.42, 0.38),        # BOSS 关：染红（图形用精英关那一排）
 	"defend": Color(0.55, 0.80, 1.0),      # 守护关：淡蓝（图形用 W.png 第 5 排）
-	"push": Color(1.0, 0.72, 0.35),        # 推车关：橙色
+	"push": Color(1.0, 0.72, 0.35),        # 推车关：橙色（外形用箱子图块）
+	"maze": Color(0.75, 0.95, 0.75),       # 迷宫关：浅绿
 }
 
 var arena_data: Dictionary = {}
@@ -119,6 +120,7 @@ func _spawn_npcs() -> void:
 	var elite_frames: SpriteFrames = _frames_from_row(64)
 	var player_frames: SpriteFrames = _player_frames()
 	var guard_frames: SpriteFrames = _frames_from_w_row(128, 4)
+	var maze_frames: SpriteFrames = _frames_from_dynamic_wall()
 	var center := Vector2i(int(floor(float(arena_data["width"]) / 2.0)), int(floor(float(arena_data["height"]) / 2.0)))
 	for index in range(SLOT_OFFSETS.size()):
 		var kind: String = kinds[index]      # 顺序固定：精英 / 普通 / 商店
@@ -132,10 +134,22 @@ func _spawn_npcs() -> void:
 			use_frames = elite_frames       # BOSS 也用精英那排图，靠颜色区分
 		elif kind == "defend":
 			use_frames = guard_frames       # 守护关：W.png 第 5 排
+		elif kind == "maze":
+			use_frames = maze_frames        # 迷宫关：动态瓦片.png 的深色墙体 4 帧
 		var title := _npc_title(kind)
 		add_child(npc)
 		npc.global_position = _cell_center(cell)
-		npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player)
+		if kind == "push":
+			# 推车关：外形换成箱子图块（瓦片.png 的箱子那格，16x16 放大 2 倍）
+			npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player,
+				load("res://resources/texture/瓦片.png") as Texture2D, Rect2(32, 48, 16, 16), 1.3)
+		elif kind == "maze":
+			# 迷宫关：动态瓦片.png 的 16x16 墙体帧。墙体是实心方块，
+			# 放大 2 倍会比角色显大一圈，所以只放大 1.3 倍
+			npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player, null, Rect2(), 1.3)
+		else:
+			# 其它关卡：32x32 角色帧，保持 1 倍
+			npc.setup(kind, title, use_frames, KIND_COLORS[kind], _player)
 		npcs.append(npc)
 
 
@@ -164,6 +178,23 @@ func _build_midmap_arena(w: int, h: int) -> Dictionary:
 
 
 ## 从 源石虫.png 的某一横排裁出一个 3 帧动画（每帧 32x32）
+## 动态瓦片.png 里那 4 帧深色墙体（16x16，放大 2 倍 = 32x32），迷宫关节点用
+func _frames_from_dynamic_wall() -> SpriteFrames:
+	var atlas := load("res://resources/texture/动态瓦片.png") as Texture2D
+	if atlas == null:
+		return null
+	var frames := SpriteFrames.new()
+	frames.clear("default")
+	for index in range(4):
+		var frame := AtlasTexture.new()
+		frame.atlas = atlas
+		frame.region = Rect2(0, 32 + index * 16, 16, 16)
+		frames.add_frame("default", frame)
+	frames.set_animation_speed("default", 4.0)
+	frames.set_animation_loop("default", true)
+	return frames
+
+
 ## W.png 某一排的 N 帧（32x32），守护关角色用
 func _frames_from_w_row(row_y: int, frame_count: int) -> SpriteFrames:
 	var atlas := load("res://resources/texture/W.png") as Texture2D

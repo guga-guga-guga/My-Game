@@ -126,16 +126,20 @@ var _room_ui_layer: CanvasLayer = null
 var _room_clock_icon: Sprite2D = null
 var _room_clock_label: Label = null
 var _room_interact_target: int = -1
+var _room_needs_release: bool = false      ## 刚开/关过门，必须先松开交互键才能再操作
 var _temp_ally_candidates: Array = []      ## 房间里站着、等玩家决定要不要带走的临时队友
 var _recruited_allies: Array = []          ## 已经带走的临时队友
 var _temp_ally_pick: int = -1              ## 正在对话的临时队友下标
 var _temp_ally_dialogue = null             ## 正式对话框（复用中间地图那套）
+var _temp_ally_prompts: Array = []         ## 临时队友头顶的「按 E 交谈」提示
 var _temp_ally_wander_left: float = 0.0
 var _room_ever_opened: Array = []          ## 房间是否被打开过（保留字段，黑幕改成按开关状态走）
 var _door_prompts: Array = []              ## 每个房间门口的「按住 E 交互」提示
 var _room_spawn_markers: Array = []        ## 每个房间对应的红门出怪点（关上门就不刷怪）
 ## 每只敌人各自在岩浆上站了多久（instance_id -> 秒），玩家与敌人各算各的
 var _enemy_lava_time: Dictionary = {}
+## 每个队友各自在岩浆上站了多久（instance_id -> 秒）
+var _ally_lava_time: Dictionary = {}
 
 var _goal_label: Label
 var _detail_label: Label
@@ -216,6 +220,8 @@ func _ready() -> void:
 	var arena_mode := ArenaGen.MODE_BOSS if (goal["type"] == LevelGoal.TYPE_BOSS or goal["type"] == LevelGoal.TYPE_DEFEND) else ArenaGen.MODE_NORMAL
 	if goal["type"] == LevelGoal.TYPE_PUSH:
 		arena_mode = ArenaGen.MODE_PUSH
+	if goal["type"] == LevelGoal.TYPE_MAZE:
+		arena_mode = ArenaGen.MODE_MAZE
 	if not arena_mode_override.is_empty():
 		arena_mode = arena_mode_override
 	var arena_w := arena_width
@@ -223,11 +229,16 @@ func _ready() -> void:
 	if arena_mode == ArenaGen.MODE_ROPE:
 		arena_w = arena_rope_length
 		arena_h = arena_rope_thickness
+	elif arena_mode == ArenaGen.MODE_MAZE:
+		var maze_floor := maxi(_context_floor(), 1)
+		arena_w = ArenaGen.maze_length_for_floor(maze_floor)
+		arena_h = ArenaGen.maze_thickness_for_floor(maze_floor)
 	elif arena_mode == ArenaGen.MODE_PUSH:
 		var push_floor := maxi(_context_floor(), 1)
 		arena_w = arena_push_length if arena_push_length > 0 else ArenaGen.push_length_for_floor(push_floor)
 		arena_h = arena_push_thickness if arena_push_thickness > 0 else ArenaGen.push_thickness_for_floor(push_floor)
-	arena_data = generator.generate(arena_w, arena_h, use_seed, arena_mode, maxi(_context_floor(), 1))
+	arena_data = generator.generate(arena_w, arena_h, use_seed, arena_mode,
+		maxi(_context_floor(), 1), _context_node_type())
 	if goal["type"] == LevelGoal.TYPE_PUSH:
 		_apply_push_time_limit()
 		if debug_print:
@@ -240,6 +251,8 @@ func _ready() -> void:
 	if not player.heal_ally_requested.is_connected(_on_player_heal_requested):
 		player.heal_ally_requested.connect(_on_player_heal_requested)
 
+	if arena_mode == ArenaGen.MODE_MAZE:
+		_setup_maze()
 	if arena_mode == ArenaGen.MODE_PUSH:
 		_spawn_push_box()
 		_setup_push_rooms()
@@ -258,6 +271,9 @@ func _ready() -> void:
 	if goal["type"] == LevelGoal.TYPE_DEFEND:
 		_spawn_defend_target()
 		_configure_defend_spawn()
+		_setup_defend_build()
+	if arena_mode == ArenaGen.MODE_MAZE:
+		_spawn_maze_enemies()
 	if arena_mode == ArenaGen.MODE_PUSH:
 		# 推车关红门刷怪放慢：每 5 秒一只，别把推车路堵死
 		spawn_interval = 5.0
@@ -275,9 +291,13 @@ func _ready() -> void:
 		_spawn_bosses_for_floor()
 		_start_boss_door_spawner()
 	elif _waves.is_empty():
-		if arena_mode != ArenaGen.MODE_PUSH:
+		if goal["type"] == LevelGoal.TYPE_DEFEND:
+			pass                              # 守护关：等建造模式里点「开始关卡」再刷怪
+		elif arena_mode != ArenaGen.MODE_PUSH:
 			_spawn_initial_enemies()          # 推车关开局不刷一片，只靠红门每 5 秒一只
-		_start_enemy_spawn_timer()
+			_start_enemy_spawn_timer()
+		else:
+			_start_enemy_spawn_timer()
 	else:
 		_wave_timer_left = 0.6
 
@@ -670,6 +690,12 @@ func _process(delta: float) -> void:
 	_refresh_goal_hud()
 	_update_lava_damage(delta)
 	_update_push_rooms(delta)
+	if not _maze_exit_cells.is_empty():
+		_update_maze(delta)
+	if goal.get("type", "") == LevelGoal.TYPE_DEFEND:
+		_update_defend_build(delta)
+		if not _defend_started:
+			stage_time_left = stage_duration      # 建造模式期间倒计时不走
 
 
 ## 波次推进:刷完一波 到 等场上清空 到 下一波；最后一波清空即达成目标
@@ -1414,6 +1440,8 @@ func _goal_state() -> Dictionary:
 		"push_arrived": _push_arrived,
 		"push_progress": int(_push_box.moved_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
 		"push_total": int(_push_box.total_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
+		"maze_exited": _maze_exited,
+		"maze_elapsed": _maze_elapsed,
 	}
 
 
@@ -1739,47 +1767,22 @@ func debug_pool_has_shooter() -> bool:
 	return false
 
 
-## 右侧守护对象面板：头像 + 血量，淡蓝色外框
+## 守护对象血量：悬停在它头顶（复用原来那块淡蓝样式的文字，不再占右侧面板）
 func _setup_defend_hud() -> void:
-	var layer := get_node_or_null("BattleHud") as CanvasLayer
-	if layer == null:
+	if _guard_target == null or not is_instance_valid(_guard_target):
 		return
-	var panel := PanelContainer.new()
-	panel.name = "GuardPanel"
-	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	panel.offset_left = -240.0
-	panel.offset_right = -16.0
-	panel.offset_top = 150.0
-	panel.offset_bottom = 150.0
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.05, 0.08, 0.12, 0.6)
-	style.border_color = Color(0.55, 0.80, 1.0, 0.95)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(8)
-	panel.add_theme_stylebox_override("panel", style)
-	layer.add_child(panel)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	panel.add_child(row)
-	var icon := TextureRect.new()
-	icon.texture = _guard_icon_texture()
-	icon.custom_minimum_size = Vector2(44, 44)
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	row.add_child(icon)
-	var info := VBoxContainer.new()
-	row.add_child(info)
-	var title := Label.new()
-	title.text = "守护对象"
-	title.add_theme_font_size_override("font_size", HUD_FONT_NAME)
-	title.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
-	info.add_child(title)
-	_guard_hud_hp = Label.new()
-	_guard_hud_hp.add_theme_font_size_override("font_size", HUD_FONT_SMALL)
-	_guard_hud_hp.add_theme_color_override("font_color", Color(0.70, 0.90, 1.0))
-	info.add_child(_guard_hud_hp)
+	var head := Label.new()
+	head.name = "GuardHeadHud"
+	head.z_index = 90
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.add_theme_font_size_override("font_size", room_prompt_font_size)
+	head.add_theme_color_override("font_color", Color(0.70, 0.90, 1.0))
+	head.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	head.add_theme_constant_override("outline_size", 2)
+	head.position = Vector2(-40.0, -40.0)
+	head.size = Vector2(80.0, 18.0)
+	_guard_target.add_child(head)
+	_guard_hud_hp = head
 	_refresh_guard_hud()
 
 
@@ -1798,7 +1801,8 @@ func _guard_icon_texture() -> Texture2D:
 func _refresh_guard_hud() -> void:
 	if _guard_hud_hp == null or _guard_target == null or not is_instance_valid(_guard_target):
 		return
-	_guard_hud_hp.text = "%d / %d" % [int(_guard_target.current_health), int(_guard_target.MAX_HEALTH)]
+	_guard_hud_hp.text = "守护对象 %d / %d" % [
+		int(_guard_target.current_health), int(_guard_target.MAX_HEALTH)]
 
 
 func _on_guard_health_changed(_current: int, _maximum: int) -> void:
@@ -1997,6 +2001,20 @@ func _spawn_temp_ally(cell: Vector2i) -> void:
 	ally.set_physics_process(false)          # 没被带走之前站着不动
 	ally.died.connect(_on_temp_ally_died.bind(ally))
 	_temp_ally_candidates.append(ally)
+	# 头顶提示（走近才显示，和门口提示同风格）
+	var prompt := Label.new()
+	prompt.name = "AllyPrompt"
+	prompt.text = "按 E 交谈"
+	prompt.z_index = 80
+	prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	prompt.add_theme_font_size_override("font_size", room_prompt_font_size)
+	prompt.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
+	prompt.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	prompt.add_theme_constant_override("outline_size", 2)
+	prompt.position = (ally as Node2D).global_position + Vector2(-24.0, -34.0)
+	prompt.visible = false
+	add_child(prompt)
+	_temp_ally_prompts.append({"ally": ally, "label": prompt})
 
 
 ## 临时友方阵亡：在原地生成一只持枪敌人（算普通敌人，掉金币、计击杀）
@@ -2024,9 +2042,12 @@ func _spawn_shooter_enemy_at(cell: Vector2i) -> void:
 
 ## 临时友方交互：靠近 + 按一次交互键 -> 弹出「带走 / 不带」；再按一次确认带走
 func _update_temp_ally_interaction() -> void:
+	# 对话开着 / 没有待招募的队友时，把所有头顶提示都收掉（之前会残留）
 	if _temp_ally_dialogue != null and _temp_ally_dialogue.is_open():
+		_hide_all_temp_ally_prompts()
 		return
 	if _temp_ally_candidates.is_empty():
+		_hide_all_temp_ally_prompts()
 		return
 	var nearest := -1
 	var nearest_distance := INF
@@ -2038,11 +2059,37 @@ func _update_temp_ally_interaction() -> void:
 		if distance < nearest_distance:
 			nearest_distance = distance
 			nearest = i
+	_refresh_temp_ally_prompts(nearest if nearest_distance <= room_reach_cells else -1)
 	if nearest_distance > room_reach_cells:
 		return
 	if Input.is_action_just_pressed("interact"):
 		_temp_ally_pick = nearest
 		_open_temp_ally_dialogue()
+
+
+## 把所有临时队友头顶提示都藏起来
+func _hide_all_temp_ally_prompts() -> void:
+	for entry in _temp_ally_prompts:
+		var label := entry["label"] as Label
+		if label != null and is_instance_valid(label):
+			label.visible = false
+
+
+## 只给"最近的那名临时队友"显示头顶提示，其它的隐藏
+func _refresh_temp_ally_prompts(nearest: int) -> void:
+	var target = null
+	if nearest >= 0 and nearest < _temp_ally_candidates.size():
+		target = _temp_ally_candidates[nearest]
+	for entry in _temp_ally_prompts:
+		var label := entry["label"] as Label
+		var ally = entry["ally"]
+		if label == null or not is_instance_valid(label):
+			continue
+		if ally == target and is_instance_valid(ally) and not bool(ally.get("is_dead")):
+			label.position = (ally as Node2D).global_position + Vector2(-24.0, -34.0)
+			label.visible = true
+		else:
+			label.visible = false
 
 
 ## 弹出正式对话框：问玩家要不要带走这名临时队友（选"先不用"还能再来一次）
@@ -2078,6 +2125,13 @@ func _recruit_temp_ally(index: int) -> void:
 		return
 	ally.set_physics_process(true)
 	ally.set_state(ally.STATE_GUARD)
+	# 招募成功：把它头顶的提示删掉
+	for entry in _temp_ally_prompts.duplicate():
+		if entry["ally"] == ally:
+			var old_label := entry["label"] as Label
+			if old_label != null and is_instance_valid(old_label):
+				old_label.queue_free()
+			_temp_ally_prompts.erase(entry)
 	# 活动范围：以箱子为中心的 5x5 格正方形（半径 2 格 = 32 像素）
 	if _push_box != null and is_instance_valid(_push_box):
 		ally.set_leash(_push_box, float(TEMP_ALLY_LEASH_CELLS) * float(ArenaGen.TILE_SIZE),
@@ -2176,6 +2230,12 @@ func _tick_room_interaction(delta: float, pressed: bool) -> void:
 	var state: Dictionary = _room_states[target]
 	if not pressed:
 		state["interact_left"] = room_interact_seconds
+		_room_needs_release = false         # 松开了，下次按住可以重新累计
+		_set_room_clock_visible(false)
+		return
+	if _room_needs_release:
+		# 刚开关过门但玩家还按着不放 -> 不累计，必须松手再按
+		state["interact_left"] = room_interact_seconds
 		_set_room_clock_visible(false)
 		return
 	# 玩家按下交互键的那一刻就开始生成房间内容（敌人先不活动，开门后才敌对）
@@ -2185,6 +2245,7 @@ func _tick_room_interaction(delta: float, pressed: bool) -> void:
 	if float(state["interact_left"]) <= 0.0:
 		_toggle_room(target)
 		state["interact_left"] = room_interact_seconds
+		_room_needs_release = true          # 开/关完必须松手，避免一直按着又触发一次
 		_set_room_clock_visible(false)
 
 
@@ -2424,6 +2485,7 @@ func _on_push_box_status_changed(new_status: String) -> void:
 func _update_lava_damage(delta: float) -> void:
 	_update_player_lava(delta)
 	_update_enemy_lava(delta)
+	_update_ally_lava(delta)
 
 
 func _update_player_lava(delta: float) -> void:
@@ -2443,6 +2505,30 @@ func _update_player_lava(delta: float) -> void:
 	if debug_print:
 		print("[Battle] 岩浆灼烧玩家 -%d 血量，剩余 %d/%d" % [
 			lava_damage, player.current_health, player.max_health])
+
+
+## 队友（雇来的 + 临时友方）踩岩浆同样掉血：每个队友各算一份计时
+func _update_ally_lava(delta: float) -> void:
+	var alive_ids := {}
+	for node in get_tree().get_nodes_in_group("ally"):
+		if not (node is Node2D) or not is_instance_valid(node):
+			continue
+		if bool(node.get("is_dead")):
+			continue
+		var ally_id: int = node.get_instance_id()
+		alive_ids[ally_id] = true
+		if not is_lava_at((node as Node2D).global_position):
+			_ally_lava_time.erase(ally_id)
+			continue
+		var stood := float(_ally_lava_time.get(ally_id, 0.0)) + delta
+		if stood < maxf(lava_damage_interval, 0.05):
+			_ally_lava_time[ally_id] = stood
+			continue
+		var applied: bool = bool(node.call("apply_damage", lava_damage)) if node.has_method("apply_damage") else false
+		_ally_lava_time[ally_id] = 0.0 if applied else stood
+	for ally_id in _ally_lava_time.keys():
+		if not alive_ids.has(ally_id):
+			_ally_lava_time.erase(ally_id)
 
 
 ## 敌人（含 BOSS / 紫 BOSS）踩岩浆同样掉血：每只敌人各算一份计时
@@ -2517,3 +2603,740 @@ func _add_bound_shape(body: StaticBody2D, center: Vector2, size: Vector2) -> voi
 	collider.shape = shape
 	collider.position = center
 	body.add_child(collider)
+
+
+# ============================ 迷宫关运行时 ============================
+
+@export_group("迷宫关")
+## 多少秒后开始给指引 + 开始岩浆化
+@export var maze_guide_seconds: float = 60.0
+## 多少秒后除指引线以外全部变成岩浆
+@export var maze_lava_seconds: float = 120.0
+
+var _maze_elapsed: float = 0.0
+var _maze_exited: bool = false
+var _maze_exit_cells: Array[Vector2i] = []
+var _maze_guide_cells: Array[Vector2i] = []
+var _maze_lava_order: Array[Vector2i] = []
+var _maze_lava_index: int = 0
+var _maze_guide_done: bool = false
+var _maze_exit_marker: Sprite2D = null      ## 出口上漂浮发光的箱子
+var _maze_marker_time: float = 0.0
+
+
+## 迷宫关：60 秒画出玩家->出口的最短路径（警戒地板），
+## 60~120 秒把其它地板从离玩家最远处开始一格格变成岩浆，120 秒全烧完。
+func _setup_maze() -> void:
+	_maze_elapsed = 0.0
+	_maze_exited = false
+	_maze_guide_done = false
+	_maze_lava_index = 0
+	_maze_guide_cells.clear()
+	_maze_lava_order.clear()
+	_maze_exit_cells.clear()
+	for cell in arena_data.get("maze_exit_cells", []):
+		_maze_exit_cells.append(cell)
+	_spawn_maze_exit_marker()
+	if debug_print:
+		print("[Battle] 迷宫关: 出口 %d 格，怪物待刷（等敌人配置就绪）" % _maze_exit_cells.size())
+
+
+## 真正把迷宫里的怪物摆出来。
+## 必须等 _collect_enemy_configs() 跑完之后再调用，否则敌人配置还是空的，一只都刷不出来。
+func _spawn_maze_enemies() -> void:
+	var spawn_points: Array = arena_data.get("spawns", [])
+	if spawn_points.is_empty() or available_enemy_configs.is_empty():
+		return
+	var spawned := 0
+	for spawn_cell in spawn_points:
+		var config := _pick_enemy_config()
+		if config == null:
+			break
+		var scene := enemy_scene
+		if config.scene_override != null:
+			scene = config.scene_override
+		var enemy := scene.instantiate() as Enemy
+		if enemy == null:
+			continue
+		enemy_container.add_child(enemy)
+		enemy.global_position = cell_to_world(spawn_cell)
+		enemy.setup(config, player)
+		enemy.vision_mode = true          # 迷宫关：视野被墙挡住就看不见玩家
+		enemy.died.connect(_on_enemy_died)
+		spawned += 1
+	if debug_print:
+		print("[Battle] 迷宫关: 摆出怪物 %d 只（可用配置 %d 种）" % [spawned, available_enemy_configs.size()])
+
+
+## 出口上放一个漂浮发光的箱子，玩家一眼就能认出出口在哪
+func _spawn_maze_exit_marker() -> void:
+	if _maze_exit_cells.is_empty():
+		return
+	var center := Vector2.ZERO
+	for cell in _maze_exit_cells:
+		center += cell_to_world(cell)
+	center /= float(_maze_exit_cells.size())
+	_maze_exit_marker = Sprite2D.new()
+	_maze_exit_marker.name = "MazeExitMarker"
+	_maze_exit_marker.texture = load("res://resources/texture/瓦片.png")
+	_maze_exit_marker.region_enabled = true
+	_maze_exit_marker.region_rect = Rect2(32, 48, 16, 16)      # 箱子那格图块
+	_maze_exit_marker.scale = Vector2(1.8, 1.8)
+	_maze_exit_marker.z_index = 30
+	_maze_exit_marker.position = center
+	add_child(_maze_exit_marker)
+	_maze_marker_time = 0.0
+
+
+func _update_maze(delta: float) -> void:
+	_maze_elapsed += delta
+	# 出口箱子上下漂浮 + 发光呼吸
+	if _maze_exit_marker != null and is_instance_valid(_maze_exit_marker):
+		_maze_marker_time += delta
+		_maze_exit_marker.position.y += sin(_maze_marker_time * 2.4) * 6.0 * delta
+		var glow := 0.75 + 0.25 * sin(_maze_marker_time * 3.6)
+		_maze_exit_marker.modulate = Color(1.0, 0.95 + 0.05 * glow, 0.55 + 0.3 * glow, 1.0)
+	if not _maze_exited and player != null and is_instance_valid(player):
+		var player_cell := arena_cell_at(player.global_position)
+		if _maze_exit_cells.has(player_cell):
+			_maze_exited = true
+			if debug_print:
+				print("[Battle] 走出迷宫，用时 %.1f 秒" % _maze_elapsed)
+	if not _maze_guide_done and _maze_elapsed >= maze_guide_seconds:
+		_draw_maze_guide()
+		_maze_guide_done = true
+	if _maze_guide_done:
+		var span := maxf(maze_lava_seconds - maze_guide_seconds, 1.0)
+		var ratio := clampf((_maze_elapsed - maze_guide_seconds) / span, 0.0, 1.0)
+		var target := int(round(ratio * float(_maze_lava_order.size())))
+		while _maze_lava_index < target and _maze_lava_index < _maze_lava_order.size():
+			var cell: Vector2i = _maze_lava_order[_maze_lava_index]
+			_maze_lava_index += 1
+			_set_ground_tile(cell, ArenaGen.TILE_FLOOR_LAVA)
+
+
+## 从玩家到出口算一次最短路径，铺成警戒地板；同时准备好岩浆化的顺序
+func _draw_maze_guide() -> void:
+	if player == null or not is_instance_valid(player) or _maze_exit_cells.is_empty():
+		return
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var grid: Array = arena_data["grid"]
+	var start := arena_cell_at(player.global_position)
+	if not _is_walkable_cell(start):
+		return
+	var dist := {}
+	var queue: Array[Vector2i] = []
+	for cell in _maze_exit_cells:
+		dist[cell] = 0
+		queue.append(cell)
+	while not queue.is_empty():
+		var cell: Vector2i = queue.pop_front()
+		for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var next: Vector2i = cell + dir
+			if next.x < 0 or next.y < 0 or next.x >= w or next.y >= h:
+				continue
+			if dist.has(next) or int(grid[next.y * w + next.x]) != ArenaGen.CELL_FLOOR:
+				continue
+			dist[next] = int(dist[cell]) + 1
+			queue.append(next)
+	if not dist.has(start):
+		return
+	var walk := start
+	var guard_order: Array[Vector2i] = []
+	for _step in range(int(dist[start]) + 1):
+		guard_order.append(walk)
+		_set_ground_tile(walk, ArenaGen.TILE_FLOOR_GUARD)
+		var best := int(dist[walk])
+		var next_cell := walk
+		for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var probe: Vector2i = walk + dir
+			if dist.has(probe) and int(dist[probe]) == best - 1:
+				next_cell = probe
+				break
+		if next_cell == walk:
+			break
+		walk = next_cell
+	_maze_guide_cells = guard_order
+	var lava_list: Array[Vector2i] = []
+	var guard_lookup := {}
+	for cell in _maze_guide_cells:
+		guard_lookup[cell] = true
+	for y in range(h):
+		for x in range(w):
+			var cell2 := Vector2i(x, y)
+			if int(grid[y * w + x]) != ArenaGen.CELL_FLOOR or guard_lookup.has(cell2):
+				continue
+			lava_list.append(cell2)
+	lava_list.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return Vector2(a).distance_to(Vector2(start)) > Vector2(b).distance_to(Vector2(start)))
+	_maze_lava_order = lava_list
+	_maze_lava_index = 0
+	if debug_print:
+		print("[Battle] 迷宫指引线 %d 格，待岩浆化 %d 格" % [_maze_guide_cells.size(), lava_list.size()])
+
+
+## 直接改地面图层的某个格子（实时画警戒线 / 铺岩浆）
+func _set_ground_tile(cell: Vector2i, tile: Vector2i) -> void:
+	var ground := $GroundTileMapLayer as TileMapLayer
+	if ground == null:
+		return
+	ground.set_cell(cell, ArenaGen.GROUND_SOURCE, tile)
+
+
+# ============================ 守护关：建造模式 ============================
+
+@export_group("守护关建造模式")
+## 建造模式给玩家的箱子数量（能挡路，会干扰敌人寻路）
+@export var build_box_count: int = 15
+## 建造模式给玩家的岩浆地面数量（陷阱道具，允许用来堵路）
+@export var build_lava_count: int = 4
+
+var _build_mode: bool = false
+var _defend_started: bool = false
+var _build_cursor: Vector2i = Vector2i(-1, -1)
+var _build_selected: int = 0
+var _build_ghost: Sprite2D = null
+var _build_hud: CanvasLayer = null
+var _build_rows: Array = []
+var _build_box_left: int = 0
+var _build_lava_left: int = 0
+var _build_placed: Array = []
+var _build_toast: Label = null
+var _build_toast_left: float = 0.0
+var _build_hold_time: float = 0.0
+var _guard_dialogue = null
+var _build_hint: Label = null
+var _guard_prompt: Label = null
+var _build_frame: Node2D = null
+## 正常模式 / 建造模式下的操作提示
+const BUILD_HINT_NORMAL := "按 F 切换为建造模式，或与守护对象对话开始战斗"
+const BUILD_HINT_BUILD := "WASD 移动光标   方向键/1 2 切换材料   E 放置   Q 拆除   按 F 返回"
+
+
+## 进入守护关：先进入建造模式（不刷怪、不计时）
+func _setup_defend_build() -> void:
+	_defend_started = false
+	_build_box_left = build_box_count
+	_build_lava_left = build_lava_count
+	_build_selected = 0
+	_build_placed.clear()
+	_build_cursor = arena_cell_at(player.global_position)
+	_build_ghost = Sprite2D.new()
+	_build_ghost.name = "BuildGhost"
+	_build_ghost.texture = load("res://resources/texture/瓦片.png")
+	_build_ghost.region_enabled = true
+	_build_ghost.scale = Vector2(1.0, 1.0)
+	_build_ghost.z_index = 70
+	_build_ghost.visible = false
+	add_child(_build_ghost)
+	_build_cursor_frame()
+	_build_hud = CanvasLayer.new()
+	_build_hud.name = "BuildHud"
+	_build_hud.layer = 7
+	add_child(_build_hud)
+	var box := VBoxContainer.new()
+	box.position = Vector2(16.0, 120.0)
+	box.add_theme_constant_override("separation", 6)
+	_build_hud.add_child(box)
+	_build_rows.clear()
+	for i in range(2):
+		var row := PanelContainer.new()
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.05, 0.08, 0.12, 0.75)
+		style.border_color = Color(0.55, 0.80, 1.0, 0.95)
+		style.set_border_width_all(2)
+		style.set_content_margin_all(6)
+		row.add_theme_stylebox_override("panel", style)
+		box.add_child(row)
+		var hbox := HBoxContainer.new()
+		hbox.add_theme_constant_override("separation", 8)
+		row.add_child(hbox)
+		var num := Label.new()
+		num.text = "%d" % (i + 1)
+		num.add_theme_font_size_override("font_size", 18)
+		num.add_theme_color_override("font_color", Color(1, 0.95, 0.7))
+		hbox.add_child(num)
+		var icon := TextureRect.new()
+		icon.texture = _build_icon_texture(i)
+		icon.custom_minimum_size = Vector2(28, 28)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		hbox.add_child(icon)
+		var count_label := Label.new()
+		count_label.add_theme_font_size_override("font_size", 18)
+		count_label.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
+		hbox.add_child(count_label)
+		_build_rows.append({"panel": row, "count": count_label, "style": style})
+	# 顶部提示（白框 + 淡黑底）
+	_build_toast = Label.new()
+	_build_toast.name = "BuildToast"
+	_build_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_toast.add_theme_font_size_override("font_size", 22)
+	_build_toast.add_theme_color_override("font_color", Color(1, 1, 1))
+	_build_toast.add_theme_stylebox_override("normal", _build_toast_style())
+	_build_toast.position = Vector2(240.0, 32.0)
+	_build_toast.size = Vector2(320.0, 44.0)
+	_build_toast.visible = false
+	_build_hud.add_child(_build_toast)
+	_refresh_build_hud()
+	_set_build_mode(false)                 # 进关先是正常模式，按 F 才进建造模式
+	# 守护对象头顶的「按 E 交谈」提示（走近才显示）
+	if _guard_target != null and is_instance_valid(_guard_target):
+		var guard_prompt := Label.new()
+		guard_prompt.name = "GuardPrompt"
+		guard_prompt.text = "按 E 交谈"
+		guard_prompt.z_index = 90
+		guard_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		guard_prompt.add_theme_font_size_override("font_size", room_prompt_font_size)
+		guard_prompt.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
+		guard_prompt.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+		guard_prompt.add_theme_constant_override("outline_size", 2)
+		guard_prompt.position = Vector2(-28.0, -54.0)
+		guard_prompt.visible = false
+		_guard_target.add_child(guard_prompt)
+		_guard_prompt = guard_prompt
+	_build_hud.visible = false
+	# 模式提示：贴在「目标：」那一行正上方，蓝色字
+	var goal_layer := get_node_or_null("GoalHUD") as CanvasLayer
+	if goal_layer == null:
+		goal_layer = get_node_or_null("BattleHud") as CanvasLayer
+	_build_hint = _make_bottom_label(-62, 16, Color(0.55, 0.80, 1.0))
+	_build_hint.name = "BuildHint"
+	_build_hint.text = BUILD_HINT_NORMAL
+	if goal_layer != null:
+		goal_layer.add_child(_build_hint)
+	# 守护对象为中心的九宫格铺成警戒地面（标示出要守的区域）
+	if _guard_target != null and is_instance_valid(_guard_target):
+		var center := arena_cell_at(_guard_target.global_position)
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var cell := center + Vector2i(int(dx), int(dy))
+				if cell.x > 0 and cell.y > 0 and cell.x < int(arena_data["width"]) - 1 						and cell.y < int(arena_data["height"]) - 1:
+					_set_ground_tile(cell, ArenaGen.TILE_FLOOR_GUARD)
+
+
+func _build_toast_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.55)
+	style.border_color = Color(1, 1, 1, 0.95)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.set_content_margin_all(8)
+	return style
+
+
+func _build_icon_texture(index: int) -> Texture2D:
+	var atlas := AtlasTexture.new()
+	atlas.atlas = load("res://resources/texture/瓦片.png")
+	atlas.region = Rect2(32, 48, 16, 16) if index == 0 else Rect2(32, 32, 16, 16)
+	return atlas
+
+
+func _refresh_build_hud() -> void:
+	for i in range(_build_rows.size()):
+		var row: Dictionary = _build_rows[i]
+		var count_label := row["count"] as Label
+		count_label.text = "x%d" % (_build_box_left if i == 0 else _build_lava_left)
+		var style := (row["style"] as StyleBoxFlat).duplicate()
+		style.border_color = Color(1.0, 0.9, 0.4, 0.95) if i == _build_selected else Color(0.55, 0.80, 1.0, 0.95)
+		(row["panel"] as PanelContainer).add_theme_stylebox_override("panel", style)
+		row["style"] = style
+	if _build_ghost != null:
+		_build_ghost.region_rect = Rect2(32, 48, 16, 16) if _build_selected == 0 else Rect2(32, 32, 16, 16)
+
+
+func _set_build_mode(enabled: bool) -> void:
+	if _defend_started and enabled:
+		return                                # 正式开始后不能再造
+	# 进建造模式：光标一定从玩家当前位置开始（不管上次退到哪）
+	if enabled and player != null and is_instance_valid(player):
+		_build_cursor = arena_cell_at(player.global_position)
+	_build_mode = enabled
+	if player != null and is_instance_valid(player):
+		player.visible = not enabled
+		player.set_physics_process(not enabled)
+		player.damage_immune = enabled          # 建造模式下玩家完全免疫伤害
+	if _build_ghost != null:
+		_build_ghost.visible = enabled
+	if _build_frame != null:
+		_build_frame.visible = enabled
+	if _build_hint != null:
+		_build_hint.text = BUILD_HINT_BUILD if enabled else BUILD_HINT_NORMAL
+	if _build_hud != null:
+		_build_hud.visible = enabled
+	if not enabled and player != null and is_instance_valid(player):
+		# 退出建造模式：把玩家放到光标格；若那格站不了（墙里/有箱子）就自动挪到最近的空地
+		var spot := _find_standable_cell(_build_cursor)
+		if spot != Vector2i(-1, -1):
+			player.global_position = cell_to_world(spot)
+			_build_cursor = spot
+		if _build_frame != null:
+			_build_frame.visible = false
+	if debug_print:
+		print("[Battle] 建造模式 %s" % ("开启" if enabled else "关闭"))
+
+
+func _update_defend_build(delta: float) -> void:
+	if _build_toast_left > 0.0:
+		_build_toast_left = maxf(_build_toast_left - delta, 0.0)
+		if _build_toast_left <= 0.0 and _build_toast != null:
+			_build_toast.visible = false
+	if Input.is_action_just_pressed("build_mode"):
+		_set_build_mode(not _build_mode)
+		return
+	if _guard_dialogue != null and _guard_dialogue.is_open():
+		# 对话框的 _unhandled_input 在战斗里会被上面的输入逻辑抢掉，所以这里代为处理
+		if Input.is_action_just_pressed("move_up"):
+			_guard_dialogue.debug_move(-1)
+		elif Input.is_action_just_pressed("move_down"):
+			_guard_dialogue.debug_move(1)
+		elif Input.is_action_just_pressed("interact"):
+			_guard_dialogue.debug_confirm()
+		return
+	if not _build_mode:
+		_update_guard_prompt()
+		_try_guard_dialogue()
+		return
+	# 光标位置
+	if _build_cursor == Vector2i(-1, -1):
+		_build_cursor = arena_cell_at(player.global_position)
+	var move := Vector2i.ZERO
+	if Input.is_action_pressed("move_left"):
+		move = Vector2i.LEFT
+	elif Input.is_action_pressed("move_right"):
+		move = Vector2i.RIGHT
+	elif Input.is_action_pressed("move_up"):
+		move = Vector2i.UP
+	elif Input.is_action_pressed("move_down"):
+		move = Vector2i.DOWN
+	if move == Vector2i.ZERO:
+		_build_hold_time = 0.0
+	elif Input.is_action_just_pressed("move_left") or Input.is_action_just_pressed("move_right") \
+			or Input.is_action_just_pressed("move_up") or Input.is_action_just_pressed("move_down"):
+		_build_cursor += move
+		_build_hold_time = 0.0
+	else:
+		_build_hold_time += delta
+		if _build_hold_time >= 0.14:
+			_build_hold_time = 0.0
+			_build_cursor += move
+	_build_cursor.x = clampi(_build_cursor.x, 1, int(arena_data["width"]) - 2)
+	_build_cursor.y = clampi(_build_cursor.y, 1, int(arena_data["height"]) - 2)
+	if _build_ghost != null:
+		_build_ghost.position = cell_to_world(_build_cursor)
+	if _build_frame != null:
+		_build_frame.position = cell_to_world(_build_cursor)
+	if player != null and is_instance_valid(player):
+		# 摄像机是跟玩家节点的，所以建造模式下把隐藏的玩家挪到光标处，镜头就会跟着走
+		player.global_position = cell_to_world(_build_cursor)
+	# 切换材料：方向键 / 数字键
+	if Input.is_action_just_pressed("shoot_up") or Input.is_action_just_pressed("shoot_left"):
+		_build_selected = wrapi(_build_selected - 1, 0, 2)
+		_refresh_build_hud()
+	elif Input.is_action_just_pressed("shoot_down") or Input.is_action_just_pressed("shoot_right"):
+		_build_selected = wrapi(_build_selected + 1, 0, 2)
+		_refresh_build_hud()
+	if Input.is_physical_key_pressed(KEY_1):
+		_build_selected = 0
+		_refresh_build_hud()
+	elif Input.is_physical_key_pressed(KEY_2):
+		_build_selected = 1
+		_refresh_build_hud()
+	if Input.is_action_just_pressed("interact"):
+		_build_place()
+	if Input.is_physical_key_pressed(KEY_Q):
+		_build_remove()
+
+
+## 放置当前选中的方块
+func _build_place() -> void:
+	var cell := _build_cursor
+	if not _is_buildable_cell(cell):
+		_build_toast_msg("这里不能放置")
+		return
+	if not _find_placed_at(cell).is_empty():
+		_build_toast_msg("这格已经有东西了")
+		return
+	if _build_selected == 0:
+		if _build_box_left <= 0:
+			_build_toast_msg("箱子用完了")
+			return
+		# 箱子不能把路堵死
+		if not _box_keeps_path_open(cell):
+			_build_toast_msg("不能堵死道路")
+			_flash_blocked_region(cell)
+			return
+		_build_box_left -= 1
+		var body := StaticBody2D.new()
+		body.name = "BuildBox"
+		body.collision_layer = 1
+		body.collision_mask = 0
+		var shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(16.0, 16.0)
+		shape.shape = rect
+		body.add_child(shape)
+		var sprite := Sprite2D.new()
+		sprite.texture = load("res://resources/texture/瓦片.png")
+		sprite.region_enabled = true
+		sprite.region_rect = Rect2(32, 48, 16, 16)
+		body.add_child(sprite)
+		add_child(body)
+		body.global_position = cell_to_world(cell)
+		_build_placed.append({"type": "box", "cell": cell, "node": body})
+		# 把这一格标成实心，敌人寻路才会绕开它
+		var pf = EnemyPathfinder.instance
+		if pf != null:
+			pf.mark_blocked(cell)
+	else:
+		if _build_lava_left <= 0:
+			_build_toast_msg("岩浆用完了")
+			return
+		if _is_next_to_guard(cell):
+			_build_toast_msg("岩浆不能贴着守护对象")
+			return
+		_build_lava_left -= 1
+		_set_ground_tile(cell, ArenaGen.TILE_FLOOR_LAVA)
+		_build_placed.append({"type": "lava", "cell": cell, "node": null})
+	_refresh_build_hud()
+
+
+## 拆掉光标所在格的方块，材料返还
+func _build_remove() -> void:
+	var entry: Dictionary = _find_placed_at(_build_cursor)
+	if entry.is_empty():
+		return
+	var node = entry["node"]
+	if node != null and is_instance_valid(node):
+		node.queue_free()
+	if String(entry["type"]) == "box":
+		_build_box_left += 1
+		var pf2 = EnemyPathfinder.instance
+		if pf2 != null:
+			pf2.unmark_blocked(_build_cursor)
+	else:
+		_build_lava_left += 1
+		_set_ground_tile(_build_cursor, ArenaGen.TILE_FLOOR_PLAIN)
+	_build_placed.erase(entry)
+	_refresh_build_hud()
+
+
+func _find_placed_at(cell: Vector2i) -> Dictionary:
+	for entry in _build_placed:
+		if (entry["cell"] as Vector2i) == cell:
+			return entry
+	return {}
+
+
+## 能不能在这个格放东西（通用禁止项）
+func _is_buildable_cell(cell: Vector2i) -> bool:
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	if cell.x <= 0 or cell.y <= 0 or cell.x >= w - 1 or cell.y >= h - 1:
+		return false                              # 最外圈墙
+	var grid: Array = arena_data["grid"]
+	if int(grid[cell.y * w + cell.x]) != ArenaGen.CELL_FLOOR:
+		return false
+	for door in arena_data.get("doors", []):
+		var door_cell: Vector2i = door["cell"]
+		if door_cell == cell or door_cell + Vector2i(0, 1) == cell:
+			return false                          # 红门格
+	var spawn_cell: Vector2i = arena_data.get("player_spawn", Vector2i(-1, -1))
+	if cell == spawn_cell:
+		return false                              # 玩家出生格
+	if _guard_target != null and is_instance_valid(_guard_target):
+		if arena_cell_at(_guard_target.global_position) == cell:
+			return false                          # 守护对象格
+	return true
+
+
+func _is_next_to_guard(cell: Vector2i) -> bool:
+	if _guard_target == null or not is_instance_valid(_guard_target):
+		return false
+	var guard_cell := arena_cell_at(_guard_target.global_position)
+	return absi(guard_cell.x - cell.x) <= 1 and absi(guard_cell.y - cell.y) <= 1
+
+
+## 放一个箱子之后，守护对象是不是还连得到至少一个红门
+func _box_keeps_path_open(cell: Vector2i) -> bool:
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var grid: Array = arena_data["grid"]
+	var blocked := {}
+	blocked[cell] = true
+	for entry in _build_placed:
+		if String(entry["type"]) == "box":
+			blocked[entry["cell"]] = true
+	if _guard_target == null or not is_instance_valid(_guard_target):
+		return true
+	var start := arena_cell_at(_guard_target.global_position)
+	var door_cells := {}
+	for door in arena_data.get("doors", []):
+		door_cells[door["cell"]] = true
+	var visited := {start: true}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_front()
+		if door_cells.has(cur):
+			return true
+		for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var next: Vector2i = cur + dir
+			if next.x <= 0 or next.y <= 0 or next.x >= w - 1 or next.y >= h - 1:
+				continue
+			if visited.has(next) or blocked.has(next):
+				continue
+			if int(grid[next.y * w + next.x]) != ArenaGen.CELL_FLOOR:
+				continue
+			visited[next] = true
+			queue.append(next)
+	return false
+
+
+## 把会被封死的区域用警戒地面闪一下，告诉玩家不能放
+func _flash_blocked_region(cell: Vector2i) -> void:
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var grid: Array = arena_data["grid"]
+	var blocked := {cell: true}
+	for entry in _build_placed:
+		if String(entry["type"]) == "box":
+			blocked[entry["cell"]] = true
+	if _guard_target == null or not is_instance_valid(_guard_target):
+		return
+	var start := arena_cell_at(_guard_target.global_position)
+	var visited := {start: true}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_front()
+		for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			var next: Vector2i = cur + dir
+			if next.x <= 0 or next.y <= 0 or next.x >= w - 1 or next.y >= h - 1:
+				continue
+			if visited.has(next) or blocked.has(next):
+				continue
+			if int(grid[next.y * w + next.x]) != ArenaGen.CELL_FLOOR:
+				continue
+			visited[next] = true
+			queue.append(next)
+	for c in visited.keys():
+		_set_ground_tile(c, ArenaGen.TILE_FLOOR_GUARD)
+	await get_tree().create_timer(1.5).timeout
+	for c in visited.keys():
+		if _find_placed_at(c).is_empty():
+			_set_ground_tile(c, ArenaGen.TILE_FLOOR_PLAIN)
+
+
+func _build_toast_msg(text: String) -> void:
+	if _build_toast == null:
+		return
+	_build_toast.text = text
+	_build_toast.visible = true
+	_build_toast.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 160.0, 32.0)
+	_build_toast_left = 1.6
+
+
+## 守护对象头顶提示：走近且还没开战时显示
+func _update_guard_prompt() -> void:
+	if _guard_prompt == null or not is_instance_valid(_guard_prompt):
+		return
+	if _defend_started or _guard_target == null or not is_instance_valid(_guard_target):
+		_guard_prompt.visible = false
+		return
+	var distance := player.global_position.distance_to(_guard_target.global_position) / float(ArenaGen.TILE_SIZE)
+	_guard_prompt.visible = distance <= 2.0
+
+
+## 和守护对象对话：选「开始关卡」才正式开局
+func _try_guard_dialogue() -> void:
+	if _defend_started:
+		return
+	if _guard_target == null or not is_instance_valid(_guard_target):
+		return
+	if _guard_dialogue != null and _guard_dialogue.is_open():
+		return
+	var distance := player.global_position.distance_to(_guard_target.global_position) / float(ArenaGen.TILE_SIZE)
+	if distance > 2.0:
+		return
+	if not Input.is_action_just_pressed("interact"):
+		return
+	if _guard_dialogue == null:
+		_guard_dialogue = DialogueBoxScript.new()
+		add_child(_guard_dialogue)
+		_guard_dialogue.option_selected.connect(_on_guard_dialogue_option)
+		_guard_dialogue.closed.connect(_on_guard_dialogue_closed)
+		_guard_dialogue.set_process_unhandled_input(false)   # 输入由 battle 代为处理
+	player.set_physics_process(false)
+	_guard_dialogue.show_dialogue("守护对象",
+		["准备好的话就开始吧。", "开始之后就不能再回来改建了。"],
+		["开始关卡", "再想想"])
+
+
+func _on_guard_dialogue_option(index: int) -> void:
+	if index == 0:
+		_start_defend_level()
+	player.set_physics_process(true)
+
+
+func _on_guard_dialogue_closed() -> void:
+	if player != null and is_instance_valid(player):
+		player.set_physics_process(true)
+
+
+func _start_defend_level() -> void:
+	if _defend_started:
+		return
+	_defend_started = true
+	_build_mode = false
+	if _build_ghost != null:
+		_build_ghost.visible = false
+	if _build_hud != null:
+		_build_hud.visible = false
+	stage_time_left = stage_duration               # 倒计时从现在开始
+	_spawn_initial_enemies()
+	_start_enemy_spawn_timer()
+	if debug_print:
+		print("[Battle] 守护关正式开始：倒计时 %.0f 秒" % stage_duration)
+
+
+## 找一个能站人的格子：优先自己，不行就在周围 5 格内找最近的地板格
+func _find_standable_cell(cell: Vector2i) -> Vector2i:
+	if _is_walkable_cell(cell) and _find_placed_at(cell).is_empty():
+		return cell
+	for radius in range(1, 6):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				var probe := cell + Vector2i(int(dx), int(dy))
+				if _is_walkable_cell(probe) and _find_placed_at(probe).is_empty():
+					return probe
+	return Vector2i(-1, -1)
+
+
+## 建造模式下光标格的白色光边（突出显示玩家要放的位置）
+func _build_cursor_frame() -> void:
+	_build_frame = Node2D.new()
+	_build_frame.name = "BuildCursorFrame"
+	_build_frame.z_index = 75
+	_build_frame.visible = false
+	add_child(_build_frame)
+	var size_px := 16.0
+	var thickness := 2.0
+	var fill := ColorRect.new()
+	fill.color = Color(1, 1, 1, 0.12)
+	fill.size = Vector2(size_px, size_px)
+	fill.position = Vector2(-size_px, -size_px) * 0.5
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_frame.add_child(fill)
+	var bars := [
+		[Vector2(-size_px * 0.5, -size_px * 0.5), Vector2(size_px, thickness)],
+		[Vector2(-size_px * 0.5, size_px * 0.5 - thickness), Vector2(size_px, thickness)],
+		[Vector2(-size_px * 0.5, -size_px * 0.5), Vector2(thickness, size_px)],
+		[Vector2(size_px * 0.5 - thickness, -size_px * 0.5), Vector2(thickness, size_px)],
+	]
+	for bar_data in bars:
+		var bar := ColorRect.new()
+		bar.color = Color(1, 1, 1, 0.95)
+		bar.position = bar_data[0]
+		bar.size = bar_data[1]
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_build_frame.add_child(bar)

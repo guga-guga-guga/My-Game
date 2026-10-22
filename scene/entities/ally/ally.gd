@@ -300,14 +300,18 @@ func _guard_goal(delta: float) -> Vector2:
 	if _guard_repick_left <= 0.0 or reached:
 		if leash_center != null:
 			# 闲逛模式：到了目标点有概率原地站一会儿，其余时候在方框内换一个随机点
-			if reached and randf() < 0.45:
+			# 移动频率调低（用户要求）：一次只走 1~2 格，到点停 1.5~2.5 秒
+			if reached and randf() < 0.35:
 				_guard_point = global_position
-				_guard_repick_left = randf_range(0.6, 1.8)
+				_guard_repick_left = randf_range(1.5, 2.5)
 			else:
-				_guard_repick_left = randf_range(0.9, 2.2)
-				_guard_point = leash_center.global_position + Vector2(
-					randf_range(-_leash_radius, _leash_radius),
-					randf_range(-_leash_radius, _leash_radius))
+				_guard_repick_left = randf_range(1.5, 2.5)
+				var angle2 := randf() * TAU
+				var step_len := randf_range(1.0, 2.0) * 16.0
+				var candidate := global_position + Vector2(cos(angle2), sin(angle2)) * step_len
+				var limit := leash_center.global_position + Vector2(_leash_radius, _leash_radius)
+				var low := leash_center.global_position - Vector2(_leash_radius, _leash_radius)
+				_guard_point = Vector2(clampf(candidate.x, low.x, limit.x), clampf(candidate.y, low.y, limit.y))
 		else:
 			_guard_repick_left = GUARD_REPICK_INTERVAL
 			var angle := randf() * TAU

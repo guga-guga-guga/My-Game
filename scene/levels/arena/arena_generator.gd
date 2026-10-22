@@ -83,7 +83,8 @@ const FOUR_DIRS: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, 
 const MODE_NORMAL := "normal"
 const MODE_BOSS := "boss"
 const MODE_ROPE := "rope"
-const MODE_PUSH := "push"                              ## 推车关：宽路网 + 房间 + 单条警戒线
+const MODE_PUSH := "push"
+const MODE_MAZE := "maze"                              ## 迷宫关                              ## 推车关：宽路网 + 房间 + 单条警戒线
 
 # ---- 绳子场地：一条宽 2~3 格的蛇形走廊，长边远大于短边 ----
 const ROPE_LENGTH_MIN := 40                            ## 长边格数（绳子长度）
@@ -104,6 +105,16 @@ static func push_thickness_for_floor(floor_index: int) -> int:
 	return clampi(PUSH_THICKNESS_MIN + (maxi(floor_index, 1) - 1) * 2,
 		PUSH_THICKNESS_MIN, PUSH_THICKNESS_MAX)
 
+
+# ---- 迷宫关 ----
+const MAZE_LENGTH_MIN := 44
+const MAZE_LENGTH_MAX := 120
+const MAZE_ENEMY_MIN := 10                             ## 迷宫关怪物数量区间
+const MAZE_ENEMY_MAX := 20
+const MAZE_SPAWN_SAFE_CELLS := 5                       ## 离玩家出生点多少格内不刷怪
+const MAZE_SPAWN_GAP_CELLS := 3                        ## 怪物彼此至少相隔几格
+const MAZE_THICKNESS_MIN := 28
+const MAZE_THICKNESS_MAX := 64
 
 # ---- 推车关：宽路网（主路 + 岔路 + 回环）+ 道路两侧房间 ----
 ## 长边格数：警戒线长度 ≈ 长边长度，5 分钟倒计时 + 3 秒/格 => 上限约 80 格
@@ -139,10 +150,19 @@ const TILE_FLOOR_GUARD := Vector2i(2, 1)
 
 
 func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL,
-		floor_index: int = 1) -> Dictionary:
+		floor_index: int = 1, node_type: String = "") -> Dictionary:
 	var w := width
 	var h := height
-	if mode == MODE_PUSH:
+	if mode == MODE_MAZE:
+		var maze_long := clampi(maxi(width, height), MAZE_LENGTH_MIN, MAZE_LENGTH_MAX)
+		var maze_short := clampi(mini(width, height), MAZE_THICKNESS_MIN, MAZE_THICKNESS_MAX)
+		if width >= height:
+			w = maze_long
+			h = maze_short
+		else:
+			w = maze_short
+			h = maze_long
+	elif mode == MODE_PUSH:
 		var push_long := clampi(maxi(width, height), PUSH_LENGTH_MIN, PUSH_LENGTH_MAX)
 		var push_short := clampi(mini(width, height), PUSH_THICKNESS_MIN, PUSH_THICKNESS_MAX)
 		if width >= height:
@@ -166,11 +186,11 @@ func generate(width: int, height: int, rng_seed: int, mode: String = MODE_NORMAL
 		h = clampi(height, MIN_HEIGHT, MAX_HEIGHT)
 	var last_reason := ""
 	for attempt in range(MAX_ATTEMPTS):
-		var data := _generate_once(w, h, rng_seed + attempt, mode, floor_index)
+		var data := _generate_once(w, h, rng_seed + attempt, mode, floor_index, node_type)
 		if data.get("ok", false):
 			return _attach_ground_tiles(data, rng_seed + attempt)
 		last_reason = String(data.get("reason", ""))
-	var fallback := _straight_rope(w, h) if (mode == MODE_ROPE or mode == MODE_PUSH) else _empty_room(w, h)
+	var fallback := _straight_rope(w, h) if mode != MODE_NORMAL and mode != MODE_BOSS else _empty_room(w, h)
 	fallback["mode"] = mode
 	fallback["obstacles"] = []
 	fallback["message"] = "连续 %d 次生成失败 最后原因:%s ，已回落保底布局" % [MAX_ATTEMPTS, last_reason]
@@ -198,8 +218,8 @@ func _attach_ground_tiles(data: Dictionary, seed_value: int) -> Dictionary:
 	var blocked := _lava_blocked_cells(data, w, h)
 	var lava_cells: Array[Vector2i] = []
 	var lava_budget := rng.randi_range(LAVA_CELLS_MIN, LAVA_CELLS_MAX)
-	if String(data.get("mode", "")) == MODE_PUSH:
-		lava_budget = 0                    # 推车关不放岩浆（窄路 + 箱子容易被烧得太惨）
+	if String(data.get("mode", "")) == MODE_PUSH or String(data.get("mode", "")) == MODE_MAZE:
+		lava_budget = 0                    # 推车关/迷宫关不放初始岩浆（迷宫关的岩浆是 60 秒后才漫延出来的）
 	while lava_budget > 0:
 		var want := mini(rng.randi_range(LAVA_PATCH_CELLS_MIN, LAVA_PATCH_CELLS_MAX), lava_budget)
 		var painted := _paint_one_lava_patch(grid, w, h, rng, tiles, blocked, lava_cells, want)
@@ -238,6 +258,10 @@ func _attach_ground_tiles(data: Dictionary, seed_value: int) -> Dictionary:
 
 	# ③ 推车关：警戒地板（轨道 / 起终点 3x3 / 房间门口）最后刷，盖在其它材质之上
 	for cell in data.get("push_guard_cells", []):
+		if _is_floor_cell(grid, w, h, cell):
+			tiles[cell.y * w + cell.x] = TILE_FLOOR_GUARD
+	# 迷宫关：出口那 3x3 也铺警戒标志地面，方便玩家认
+	for cell in data.get("maze_guard_cells", []):
 		if _is_floor_cell(grid, w, h, cell):
 			tiles[cell.y * w + cell.x] = TILE_FLOOR_GUARD
 	data["ground_tiles"] = tiles
@@ -334,15 +358,17 @@ func _paint_one_wear_patch(grid: Array, w: int, h: int, rng: RandomNumberGenerat
 
 
 func _generate_once(w: int, h: int, rng_seed: int, mode: String = MODE_NORMAL,
-		floor_index: int = 1) -> Dictionary:
+		floor_index: int = 1, node_type: String = "") -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	if mode == MODE_BOSS:
-		return _generate_boss_arena(w, h, rng_seed)
+		return _generate_boss_arena(w, h, rng_seed, node_type == "defend")
 	if mode == MODE_ROPE:
 		return _generate_rope_arena(w, h, rng_seed)
 	if mode == MODE_PUSH:
 		return _generate_push_arena(w, h, rng_seed, floor_index)
+	if mode == MODE_MAZE:
+		return _generate_maze_arena(w, h, rng_seed, floor_index)
 	var grid: Array = []
 	grid.resize(w * h)
 	grid.fill(CELL_WALL)
@@ -470,7 +496,7 @@ func _empty_room(w: int, h: int) -> Dictionary:
 ## 用"最远点采样"分散 4 道门：先随机挑一道，之后每道都挑离已有红门最远的那格，
 ## 于是红门自然铺到场地四角附近，敌人从四个方向往中间涌。
 func _place_interior_doors(grid: Array, w: int, h: int, rng: RandomNumberGenerator,
-		require_2x2: bool = false) -> Array[Dictionary]:
+		require_2x2: bool = false, door_count: int = DOOR_COUNT) -> Array[Dictionary]:
 	var candidates: Array[Vector2i] = []
 	for y in range(DOOR_INSET, h - DOOR_INSET):
 		for x in range(DOOR_INSET, w - DOOR_INSET):
@@ -481,7 +507,7 @@ func _place_interior_doors(grid: Array, w: int, h: int, rng: RandomNumberGenerat
 	if candidates.is_empty():
 		return []
 	picked.append(candidates[rng.randi_range(0, candidates.size() - 1)])
-	while picked.size() < DOOR_COUNT:
+	while picked.size() < door_count:
 		var best := Vector2i(-1, -1)
 		var best_score := -1.0
 		for cell in candidates:
@@ -736,7 +762,7 @@ func _farthest_floor_from_doors(grid: Array, w: int, h: int, doors: Array) -> Ve
 ##   ① 内部整片开阔地（没有 1 格宽的缝隙，Boss 的本体半径 16 不会被卡）
 ##   ② 障碍物只放 2~3 块，且每块都 >= 2x2（用户要求："障碍物至少 2 格宽、墙大量减少"）
 ##   ③ 边界墙只有外圈 1 格（用户要求："边界墙至多 2 格宽"）
-func _generate_boss_arena(w: int, h: int, rng_seed: int) -> Dictionary:
+func _generate_boss_arena(w: int, h: int, rng_seed: int, defend_layout: bool = false) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = rng_seed
 	var grid: Array = []
@@ -745,7 +771,8 @@ func _generate_boss_arena(w: int, h: int, rng_seed: int) -> Dictionary:
 	_seal_border(grid, w, h)
 
 	var obstacles: Array[Rect2i] = []
-	var target_count := rng.randi_range(2, 3)
+	# 守护关：障碍数量少量增加（3~4 块）；BOSS 关仍是 2~3 块
+	var target_count := rng.randi_range(3, 4) if defend_layout else rng.randi_range(2, 3)
 	for _index in range(target_count * 12):
 		if obstacles.size() >= target_count:
 			break
@@ -764,8 +791,9 @@ func _generate_boss_arena(w: int, h: int, rng_seed: int) -> Dictionary:
 		obstacles.append(candidate)
 		_fill_rect(grid, w, candidate, CELL_WALL)
 
-	var doors: Array[Dictionary] = _place_interior_doors(grid, w, h, rng, true)
-	if doors.size() != DOOR_COUNT:
+	var want_doors := 3 if defend_layout else DOOR_COUNT
+	var doors: Array[Dictionary] = _place_interior_doors(grid, w, h, rng, true, want_doors)
+	if doors.size() != want_doors:
 		return {"ok": false, "reason": "Boss 场地红门放置失败(%d/%d)" % [doors.size(), DOOR_COUNT]}
 
 	var player_spawn := _farthest_floor_from_doors(grid, w, h, doors)
@@ -1697,3 +1725,222 @@ func _push_widen_path(grid: Array, w: int, h: int, path: Array[Vector2i]) -> voi
 				if target.x <= 0 or target.y <= 0 or target.x >= w - 1 or target.y >= h - 1:
 					continue
 				grid[target.y * w + target.x] = CELL_FLOOR
+
+## 迷宫关占地随层数成长：长边 = 40+(层-1)*4（上限 76），短边 = 26+(层-1)*2（上限 44）
+static func maze_length_for_floor(floor_index: int) -> int:
+	return clampi(MAZE_LENGTH_MIN + (maxi(floor_index, 1) - 1) * 8, MAZE_LENGTH_MIN, MAZE_LENGTH_MAX)
+
+
+static func maze_thickness_for_floor(floor_index: int) -> int:
+	return clampi(MAZE_THICKNESS_MIN + (maxi(floor_index, 1) - 1) * 4,
+		MAZE_THICKNESS_MIN, MAZE_THICKNESS_MAX)
+
+
+# ============================ 迷宫关地形 ============================
+
+## 迷宫关：随机 DFS 挖出来的迷宫，走廊 2 格宽、墙 1 格厚。
+## 起点在一侧，出口在另一侧（3x3）；另有若干怪物出生点，供 battle 摆怪。
+## 60 秒后的"警戒指引线"和"岩浆漫延"由 battle 运行时处理。
+func _generate_maze_arena(w: int, h: int, rng_seed: int, floor_index: int = 1) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = rng_seed
+	var horizontal := w >= h
+	var length := w if horizontal else h
+	var thickness := h if horizontal else w
+	if length < MAZE_LENGTH_MIN or thickness < MAZE_THICKNESS_MIN:
+		return {"ok": false, "reason": "迷宫关尺寸不合适(%dx%d)" % [w, h]}
+	var grid: Array = []
+	grid.resize(w * h)
+	grid.fill(CELL_WALL)
+	_seal_border(grid, w, h)
+
+	const STEP := 3                     # 每格：2x2 地面 + 1 格墙
+	var cols := int(float(length - 4) / float(STEP))
+	var rows := int(float(thickness - 4) / float(STEP))
+	if cols < 4 or rows < 4:
+		return {"ok": false, "reason": "迷宫格数太少(%dx%d)" % [cols, rows]}
+
+	# ---- 随机 Prim 生成迷宫（比 DFS 的岔路更多、不会一条长蛇走到底）----
+	var visited := {}
+	var order: Array[Vector2i] = []
+	var start_cell := Vector2i(0, rng.randi_range(0, rows - 1))
+	visited[start_cell] = true
+	order.append(start_cell)
+	var frontier: Array[Vector2i] = []
+	for dir in FOUR_DIRS:
+		var nxt: Vector2i = start_cell + dir
+		if nxt.x >= 0 and nxt.y >= 0 and nxt.x < cols and nxt.y < rows:
+			frontier.append(nxt)
+	while not frontier.is_empty():
+		var pick_index := rng.randi_range(0, frontier.size() - 1)
+		var cell: Vector2i = frontier[pick_index]
+		frontier.remove_at(pick_index)
+		if visited.has(cell):
+			continue
+		# 从已加入的邻居里随机挑一个打通
+		var joined: Array[Vector2i] = []
+		for dir2 in FOUR_DIRS:
+			var nb: Vector2i = cell + dir2
+			if nb.x < 0 or nb.y < 0 or nb.x >= cols or nb.y >= rows:
+				continue
+			if visited.has(nb):
+				joined.append(nb)
+		if joined.is_empty():
+			continue
+		var link: Vector2i = joined[rng.randi_range(0, joined.size() - 1)]
+		_carve_maze_link(grid, w, h, horizontal, link, cell)
+		visited[cell] = true
+		order.append(cell)
+		for dir3 in FOUR_DIRS:
+			var nb2: Vector2i = cell + dir3
+			if nb2.x < 0 or nb2.y < 0 or nb2.x >= cols or nb2.y >= rows:
+				continue
+			if not visited.has(nb2):
+				frontier.append(nb2)
+	# 再补一批"死胡同短枝"：从已有走廊往外挖 1 格，增加岔路数量
+	var spur_count := int(float(order.size()) / 4.0)
+	for _spur in range(spur_count):
+		var base: Vector2i = order[rng.randi_range(0, order.size() - 1)]
+		var dir4: Vector2i = FOUR_DIRS[rng.randi_range(0, 3)]
+		var tip: Vector2i = base + dir4
+		if tip.x < 0 or tip.y < 0 or tip.x >= cols or tip.y >= rows:
+			continue
+		if visited.has(tip):
+			continue
+		_carve_maze_link(grid, w, h, horizontal, base, tip)
+		visited[tip] = true
+		order.append(tip)
+	# 挖出所有格子带
+	for cell in order:
+		_carve_maze_cell(grid, w, h, horizontal, cell)
+
+	# ---- 起点 / 出口 ----
+	var start_along := _maze_along(start_cell.x)
+	var start_across := _maze_across(start_cell.y)
+	var player_spawn := _rope_cell(horizontal, start_along + 1, start_across + 1)
+	if not _in_bounds(player_spawn, w, h):
+		return {"ok": false, "reason": "迷宫起点越界"}
+	# 出口：只在"右边缘"的格子里挑，且用真实步行距离（BFS）取最远的那一个
+	var flood := _maze_flood(grid, w, h, player_spawn)
+	var exit_cell := Vector2i(cols - 1, clampi(int(float(rows) / 2.0), 0, rows - 1))
+	var best := -1
+	for cell in order:
+		if cell.x != cols - 1:
+			continue
+		var center := _rope_cell(horizontal, _maze_along(cell.x) + 1, _maze_across(cell.y) + 1)
+		if not flood.has(center):
+			continue
+		var distance := int(flood[center])
+		if distance > best:
+			best = distance
+			exit_cell = cell
+	if best < 0:
+		# 兜底：右边缘都不可达时退回"全场步行最远"
+		for cell in order:
+			var center2 := _rope_cell(horizontal, _maze_along(cell.x) + 1, _maze_across(cell.y) + 1)
+			if not flood.has(center2):
+				continue
+			var distance2 := int(flood[center2])
+			if distance2 > best:
+				best = distance2
+				exit_cell = cell
+	var exit_cells: Array[Vector2i] = []
+	var exit_along := _maze_along(exit_cell.x)
+	var exit_across := _maze_across(exit_cell.y)
+	for da in range(-1, 2):
+		for dc in range(-1, 2):
+			var cell := _rope_cell(horizontal, exit_along + 1 + da, exit_across + 1 + dc)
+			if cell.x <= 0 or cell.y <= 0 or cell.x >= w - 1 or cell.y >= h - 1:
+				continue
+			grid[cell.y * w + cell.x] = CELL_FLOOR
+			exit_cells.append(cell)
+	# ---- 怪物出生点：离玩家出生点 5 格以外的任意地板格，随机撒 10~20 只 ----
+	var spawns: Array[Vector2i] = []
+	var spawn_count := rng.randi_range(MAZE_ENEMY_MIN, MAZE_ENEMY_MAX)
+	var candidates: Array[Vector2i] = []
+	for y in range(2, h - 2):
+		for x in range(2, w - 2):
+			var cell := Vector2i(x, y)
+			if int(grid[y * w + x]) != CELL_FLOOR:
+				continue
+			if Vector2(cell).distance_to(Vector2(player_spawn)) <= float(MAZE_SPAWN_SAFE_CELLS):
+				continue
+			candidates.append(cell)
+	# 打乱后逐个挑，并保证彼此间隔 3 格以上，别全挤在一起
+	for _try in range(spawn_count * 12):
+		if spawns.size() >= spawn_count or candidates.is_empty():
+			break
+		var pick := candidates[rng.randi_range(0, candidates.size() - 1)]
+		var too_close := false
+		for existing in spawns:
+			if Vector2(existing).distance_to(Vector2(pick)) < float(MAZE_SPAWN_GAP_CELLS):
+				too_close = true
+				break
+		if too_close:
+			continue
+		spawns.append(pick)
+
+	var data := {
+		"ok": true, "seed": rng_seed, "mode": MODE_MAZE, "width": w, "height": h,
+		"grid": grid, "doors": [], "spawns": spawns, "player_spawn": player_spawn,
+		"room_count": 0, "obstacles": [], "floor_count": _count_floor(grid), "message": "",
+		"rope_axis": "horizontal" if horizontal else "vertical",
+		"maze_exit_cells": exit_cells,
+		"maze_guard_cells": exit_cells,
+		"maze_exit_center": _rope_cell(horizontal, exit_along + 1, exit_across + 1),
+		"maze_cols": cols, "maze_rows": rows,
+	}
+	if _floor_components(grid, w, h) != 1:
+		return {"ok": false, "reason": "迷宫地面没连成一片", "grid": grid, "width": w, "height": h}
+	return data
+
+
+func _maze_along(index: int) -> int:
+	return 2 + index * 3
+
+
+func _maze_across(index: int) -> int:
+	return 2 + index * 3
+
+
+## 挖出一个迷宫的"格"（2x2 地面）
+func _carve_maze_cell(grid: Array, w: int, h: int, horizontal: bool, cell: Vector2i) -> void:
+	var along := _maze_along(cell.x)
+	var across := _maze_across(cell.y)
+	_push_fill(grid, w, h, horizontal, along, across, along + 1, across + 1)
+
+
+## 打通相邻两格之间的 1 格墙（宽 2 格）
+func _carve_maze_link(grid: Array, w: int, h: int, horizontal: bool, a: Vector2i, b: Vector2i) -> void:
+	var along_a := _maze_along(a.x)
+	var across_a := _maze_across(a.y)
+	if b.x > a.x:
+		_push_fill(grid, w, h, horizontal, along_a + 2, across_a, along_a + 2, across_a + 1)
+	elif b.x < a.x:
+		_push_fill(grid, w, h, horizontal, along_a - 1, across_a, along_a - 1, across_a + 1)
+	elif b.y > a.y:
+		_push_fill(grid, w, h, horizontal, along_a, across_a + 2, along_a + 1, across_a + 2)
+	else:
+		_push_fill(grid, w, h, horizontal, along_a, across_a - 1, along_a + 1, across_a - 1)
+
+
+## 从某个起点在迷宫里做一次 BFS，返回 {格子: 步数}（用于算真实步行距离）
+func _maze_flood(grid: Array, w: int, h: int, start: Vector2i) -> Dictionary:
+	var dist := {}
+	if start.x <= 0 or start.y <= 0 or start.x >= w - 1 or start.y >= h - 1:
+		return dist
+	if int(grid[start.y * w + start.x]) != CELL_FLOOR:
+		return dist
+	dist[start] = 0
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var cell: Vector2i = queue.pop_front()
+		for dir in FOUR_DIRS:
+			var next: Vector2i = cell + dir
+			if next.x <= 0 or next.y <= 0 or next.x >= w - 1 or next.y >= h - 1:
+				continue
+			if dist.has(next) or int(grid[next.y * w + next.x]) != CELL_FLOOR:
+				continue
+			dist[next] = int(dist[cell]) + 1
+			queue.append(next)
+	return dist

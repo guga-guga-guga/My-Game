@@ -52,6 +52,27 @@ var _guard_chase_player := false
 #受击闪烁持续时间
 @export var hurt_blink_duration: float = 0.16
 
+# ---- 迷宫关专用：视野锁定 ----
+## 开启后：只有玩家在"自己正前方 90 度扇形、6 格内、且中间不被墙挡"时才会锁定玩家
+@export var vision_mode: bool = false
+@export var vision_range_cells: float = 6.0
+@export var vision_half_angle_deg: float = 45.0
+## 失去视野后追最后已知位置多少秒，超时就放弃并开始散步
+@export var lost_sight_seconds: float = 2.0
+## 散步半径（格）与到点停留时间
+@export var wander_radius_cells: float = 3.0
+@export var wander_wait_min: float = 1.0
+@export var wander_wait_max: float = 2.0
+
+var _vision_facing: Vector2 = Vector2.DOWN      ## 迷宫关：最近一次移动方向，当视野朝向用
+var _vision_locked: bool = false
+var _lost_timer: float = 0.0
+var _last_known_position: Vector2 = Vector2.ZERO
+var _wander_target: Vector2 = Vector2.ZERO
+var _wander_wait_left: float = 0.0
+var _wander_stuck_time: float = 0.0            ## 卡在墙上的累计时间，超时就换个目标
+var _wander_last_position: Vector2 = Vector2.ZERO
+
 @onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 
@@ -233,6 +254,8 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector2.ZERO
 		return
 		
+	if vision_mode and _update_vision_mode(delta):
+		return
 	_chase_target = _pick_chase_target()
 	if _chase_target == null:
 		velocity = Vector2.ZERO
@@ -353,11 +376,9 @@ func _update_path(delta: float) -> void:
 	
 	var goal_position := _chase_target.global_position
 	#玩家没有墙体遮挡时直接走直线，连 A* 都不用跑，保持原有的追踪手感
-	var can_see_player := pathfinder.has_line_of_sight(global_position, goal_position)
-	if can_see_player:
-		current_path = PackedVector2Array()
-	else:
-		current_path = pathfinder.find_path(global_position, goal_position)
+	# 一律用 A* 求"到目标的最短可通行路线"（不再走直线捷径，
+	# 否则敌人会贴着墙角硬推；拆掉捷径后它们会老老实实沿最短路径绕过去）
+	current_path = pathfinder.find_path(global_position, goal_position)
 	
 	# [临时调试] 已注释，需要时取消注释
 	#if not _has_logged_path_debug:
@@ -386,9 +407,18 @@ func _resolve_pathfinder() -> EnemyPathfinder:
 
 
 #有路径就沿路点走；没有路径 或已经能直接看到玩家 就退回直线追踪
+## 当前该朝哪走：优先追 _chase_target（守护关里是守护对象），否则玩家
+func _chase_position() -> Vector2:
+	if _chase_target != null and is_instance_valid(_chase_target):
+		return (_chase_target as Node2D).global_position
+	if target_player != null and is_instance_valid(target_player):
+		return target_player.global_position
+	return global_position
+
+
 func _get_move_direction() -> Vector2:
 	if current_path.is_empty():
-		return global_position.direction_to(target_player.global_position)
+		return global_position.direction_to(_chase_position())
 	
 	#丢掉已经到达的路点，最后一个点永远保留
 	while current_path.size() > 1:
@@ -396,9 +426,9 @@ func _get_move_direction() -> Vector2:
 			break
 		current_path.remove_at(0)
 	
-	#只剩终点时朝玩家的实时位置走，避免一直追着算路那一刻的残影
+	#只剩终点时朝目标的实时位置走，避免一直追着算路那一刻的残影
 	if current_path.size() <= 1:
-		return global_position.direction_to(target_player.global_position)
+		return global_position.direction_to(_chase_position())
 	
 	return global_position.direction_to(current_path[0])
 
@@ -693,3 +723,140 @@ func _play_sfx(audio_player: AudioStreamPlayer) -> void:
 	
 	audio_player.stop()
 	audio_player.play()
+
+
+# ---------------- 迷宫关：视野锁定 + 短距离散步 ----------------
+
+## 返回 true 表示这一帧的行为已经由视野模式处理完了
+func _update_vision_mode(delta: float) -> bool:
+	if not is_instance_valid(target_player) or target_player.is_dead:
+		_vision_locked = false
+		_do_wander(delta)
+		return true
+	_update_facing_from_move()
+	if _can_see_player():
+		_vision_locked = true
+		_lost_timer = 0.0
+		_last_known_position = target_player.global_position
+		# 锁定：和普通关一样直接追
+		_chase_target = target_player
+		_update_path(delta)
+		var direction := _get_move_direction()
+		if direction != Vector2.ZERO:
+			_update_facing(direction)
+			velocity = direction * _get_move_speed()
+		else:
+			velocity = Vector2.ZERO
+		move_and_slide()
+		return true
+	if _vision_locked:
+		# 刚看不见：2 秒内继续追玩家的最后已知位置
+		_lost_timer += delta
+		var to_last := _last_known_position - global_position
+		if _lost_timer < lost_sight_seconds and to_last.length() > 6.0:
+			var direction2 := to_last.normalized()
+			_update_facing(direction2)
+			velocity = direction2 * _get_move_speed()
+			move_and_slide()
+			return true
+		_vision_locked = false
+		_wander_wait_left = 0.0
+	_do_wander(delta)
+	return true
+
+
+## 扇形视野 + 直线不被墙挡
+func _can_see_player() -> bool:
+	var to_player := target_player.global_position - global_position
+	var range_px := vision_range_cells * 16.0
+	if to_player.length() > range_px:
+		return false
+	var forward := _facing_vector()
+	if forward == Vector2.ZERO:
+		return false
+	if rad_to_deg(absf(forward.angle_to(to_player))) > vision_half_angle_deg:
+		return false
+	# 射线检查：中间被墙挡住就看不见
+	var space := get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(global_position, target_player.global_position, 1)
+	var hit := space.intersect_ray(query)
+	return hit.is_empty()
+
+
+## 当前朝向 -> 单位向量（敌人只有左右翻转的动画，所以自己记住最近一次移动方向）
+func _facing_vector() -> Vector2:
+	return _vision_facing
+
+
+func _update_facing_from_move() -> void:
+	if velocity.length() > 1.0:
+		_vision_facing = velocity.normalized()
+
+
+## 没锁定时：在当前位置附近 2~3 格随机散步，到点停一会儿
+## 重点：目标点必须落在可走格子上，否则敌人会一直顶着墙左右滑（就是"原地抽搐"）
+func _do_wander(delta: float) -> void:
+	if _wander_wait_left > 0.0:
+		_wander_wait_left = maxf(_wander_wait_left - delta, 0.0)
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+	# 卡住检测：目标还没到、但人几乎没动 -> 换一个目标
+	if _wander_target != Vector2.ZERO and global_position.distance_to(_wander_target) >= 6.0:
+		if global_position.distance_to(_wander_last_position) < 1.0:
+			_wander_stuck_time += delta
+		else:
+			_wander_stuck_time = 0.0
+		_wander_last_position = global_position
+		if _wander_stuck_time > 0.5:
+			_wander_target = Vector2.ZERO
+			_wander_stuck_time = 0.0
+	if _wander_target == Vector2.ZERO or global_position.distance_to(_wander_target) < 6.0:
+		_wander_target = _pick_wander_target()
+		_wander_wait_left = randf_range(wander_wait_min, wander_wait_max) * 0.6
+		_wander_last_position = global_position
+		_wander_stuck_time = 0.0
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+	var direction := global_position.direction_to(_wander_target)
+	_update_facing(direction)
+	velocity = direction * (_get_move_speed() * 0.8)
+	move_and_slide()
+
+
+## 挑一个真的站得住的散步目标（在附近几格里找非墙格的格心）
+func _pick_wander_target() -> Vector2:
+	var pathfinder = EnemyPathfinder.instance
+	var base_cell := Vector2i(int(floor(global_position.x / 16.0)), int(floor(global_position.y / 16.0)))
+	for _try in range(12):
+		var angle := randf() * TAU
+		var radius := randf_range(1.5, wander_radius_cells) * 16.0
+		var candidate := global_position + Vector2(cos(angle), sin(angle)) * radius
+		if pathfinder != null and pathfinder.is_usable():
+			var cell: Vector2i = pathfinder.world_to_cell(candidate)
+			if pathfinder.is_cell_solid(cell) or not pathfinder.is_cell_inside_map(cell):
+				continue
+			if not pathfinder.has_line_of_sight(global_position, candidate):
+				continue
+		return candidate
+	# 实在找不到就回自己脚下，站着不动
+	return global_position + Vector2(base_cell.x * 0.0, 0.0)
+
+
+## 中心 + 左右各偏移一个身位的三条射线都没墙，才算"能直线走"
+func _has_clear_corridor(target_position: Vector2) -> bool:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return true
+	var direction := global_position.direction_to(target_position)
+	if direction == Vector2.ZERO:
+		return true
+	var side := Vector2(-direction.y, direction.x) * 7.0
+	for offset in [Vector2.ZERO, side, -side]:
+		var query := PhysicsRayQueryParameters2D.create(
+			global_position + offset, target_position + offset, 1)
+		query.collide_with_areas = false
+		if not space.intersect_ray(query).is_empty():
+			return false
+	return true

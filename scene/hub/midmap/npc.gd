@@ -13,7 +13,10 @@ var _player: Player = null
 var _in_range := false
 
 
-func setup(p_kind: String, p_title: String, frames: SpriteFrames, tint: Color, player_node: Player) -> void:
+## static_texture / static_region：给了就用一张静态图当外形（推车关用箱子图块）
+func setup(p_kind: String, p_title: String, frames: SpriteFrames, tint: Color, player_node: Player,
+		static_texture: Texture2D = null, static_region: Rect2 = Rect2(),
+		sprite_scale: float = 1.0) -> void:
 	kind = p_kind
 	title = p_title
 	_player = player_node
@@ -27,8 +30,18 @@ func setup(p_kind: String, p_title: String, frames: SpriteFrames, tint: Color, p
 	shape.shape = circle
 	add_child(shape)
 
-	# 角色图形：直接用敌人的 SpriteFrames，颜色区分类型
-	if frames != null:
+	# 推车关：直接摆一个箱子（静态图块），不用角色动画
+	if static_texture != null:
+		var box := Sprite2D.new()
+		box.name = "Body"
+		box.texture = static_texture
+		if static_region.size != Vector2.ZERO:
+			box.region_enabled = true
+			box.region_rect = static_region
+		box.scale = Vector2(sprite_scale, sprite_scale)
+		box.modulate = tint
+		add_child(box)
+	elif frames != null:
 		var sprite := AnimatedSprite2D.new()
 		sprite.name = "Body"
 		sprite.sprite_frames = frames
@@ -37,6 +50,8 @@ func setup(p_kind: String, p_title: String, frames: SpriteFrames, tint: Color, p
 			sprite.animation = names[0]
 		sprite.play()
 		sprite.modulate = tint
+		# 注意：32x32 的角色帧要 1 倍，16x16 的图块要 2 倍 —— 由调用方传进来
+		sprite.scale = Vector2(sprite_scale, sprite_scale)
 		add_child(sprite)
 
 	# 头顶提示（默认隐藏，走近才显示）

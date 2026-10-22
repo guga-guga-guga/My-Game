@@ -17,6 +17,8 @@ const MAIN_OPTIONS: Array[Dictionary] = [
 	{"id": "ally", "text": "调试队友关卡", "hint": "第 1 层普通关 + 固定一只队友"},
 	{"id": "boss", "text": "调试BOSS关卡", "hint": "选一只 BOSS 单独试打"},
 	{"id": "push", "text": "调试推车关", "hint": "第 3 层推车关：大路网 + 房间 + 推箱子"},
+	{"id": "maze", "text": "调试迷宫关", "hint": "第 3 层迷宫关：60 秒指引 + 岩浆漫延"},
+	{"id": "defend", "text": "调试守护关", "hint": "第 6 层守护关：守护对象 5 血，撑满 120 秒"},
 	{"id": "cancel", "text": "取消", "hint": "关掉这个窗口"},
 ]
 

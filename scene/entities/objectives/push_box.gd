@@ -47,6 +47,10 @@ var _last_index: int = 0
 var _blocked_latch: bool = false          ## 防抖：已经停了就别在边界上来回抖
 
 
+func _ready() -> void:
+	_build_range_effect()
+
+
 func setup(cells: Array[Vector2i], player: Node2D, enemies: Node) -> void:
 	path = cells
 	player_ref = player
@@ -189,3 +193,34 @@ func _cell_distance(a: Vector2, b: Vector2) -> float:
 	var ca := Vector2i(int(floor(a.x / float(TILE))), int(floor(a.y / float(TILE))))
 	var cb := Vector2i(int(floor(b.x / float(TILE))), int(floor(b.y / float(TILE))))
 	return float(maxi(absi(ca.x - cb.x), absi(ca.y - cb.y)))
+
+
+## 箱子周围那一圈"可推动范围"的淡蓝色特效（3x3 整块半透明 + 边框）
+func _build_range_effect() -> void:
+	var size_px := float((player_near_cells * 2 + 1) * TILE)
+	var holder := Node2D.new()
+	holder.name = "PushRangeFx"
+	holder.z_index = 1
+	add_child(holder)
+	var fill := ColorRect.new()
+	fill.name = "Fill"
+	fill.color = Color(0.55, 0.8, 1.0, 0.15)
+	fill.size = Vector2(size_px, size_px)
+	fill.position = -Vector2(size_px, size_px) * 0.5
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(fill)
+	var border_color := Color(0.6, 0.85, 1.0, 0.55)
+	var thickness := 2.0
+	var edges := [
+		[Vector2(-size_px * 0.5, -size_px * 0.5), Vector2(size_px, thickness)],
+		[Vector2(-size_px * 0.5, size_px * 0.5 - thickness), Vector2(size_px, thickness)],
+		[Vector2(-size_px * 0.5, -size_px * 0.5), Vector2(thickness, size_px)],
+		[Vector2(size_px * 0.5 - thickness, -size_px * 0.5), Vector2(thickness, size_px)],
+	]
+	for edge in edges:
+		var bar := ColorRect.new()
+		bar.color = border_color
+		bar.position = edge[0]
+		bar.size = edge[1]
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(bar)

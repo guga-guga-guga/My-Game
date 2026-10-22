@@ -32,6 +32,26 @@ func _exit_tree() -> void:
 
 
 ## 构建寻路网格；地图被修改后可以再次调用以重建
+## 运行时额外标记的实心格（玩家在守护关里放的箱子）
+var _extra_solid: Dictionary = {}
+
+
+## 运行时把一个格子标记成实心（放箱子）
+func mark_blocked(cell: Vector2i) -> void:
+	_extra_solid[cell] = true
+	if _grid != null:
+		_grid.set_point_solid(cell, true)
+		_grid.update()
+
+
+## 运行时取消标记（拆箱子）
+func unmark_blocked(cell: Vector2i) -> void:
+	_extra_solid.erase(cell)
+	if _grid != null:
+		_grid.set_point_solid(cell, false)
+		_grid.update()
+
+
 func build(tile_map_layers: Array[TileMapLayer]) -> void:
 	_tile_map = null
 	_grid = null
@@ -81,6 +101,9 @@ func build(tile_map_layers: Array[TileMapLayer]) -> void:
 	for cell in used_cells:
 		if _is_blocked_cell(cell, tile_map_layers):
 			_grid.set_point_solid(cell, true)
+	# 玩家在建造模式里放的箱子也要算成实心，否则敌人会直接撞上去
+	for cell in _extra_solid.keys():
+		_grid.set_point_solid(cell, true)
 	# 设置过实心点之后必须再 update() 一次才会生效
 	_grid.update()
 
