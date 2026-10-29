@@ -33,7 +33,8 @@ var spawn_count_per_tick: int = 1
 @export_range(0.1, 60.0, 0.1, "or_greater") var spawn_interval: float = 1.5
 #关卡后期允许缩短到的最小刷怪间隔
 @export_range(0.1,60.0, 0.1, "or_greater") var min_spawn_interval: float = 0.6
-#场上允许同时存在的最大敌人数，避免无限堆积
+#红门刷怪上限：只统计"从红门刷出来的敌人"（含开局刷怪/波次刷怪/红门持续涌怪），
+#BOSS 抛的小怪、岩浆 BOSS 从岩浆里放的自爆兵、房间/迷宫预先放好的敌人都不计入
 @export_range(1, 200, 1, "or_greater") var max_alive_enemies: int = 24
 
 @export_group("关卡 UI")
@@ -89,7 +90,7 @@ var _pause_menu = null
 
 #初始化刷怪系统:缓存出生点，缓存配置，刷出初始敌人并启动定时器
 func _ready() -> void:
-	MusicManager.play_stage()             # 经典模式算"其余"
+	MusicManager.play_boss()              # 经典模式也是战斗：同样放 1-29（用户要求）
 	random_generator.randomize()
 	_configure_result_dialog()
 	_setup_hud()
@@ -340,7 +341,7 @@ func _on_enemy_spawn_timer_timeout() -> void:
 func _try_spawn_enemy() -> bool:
 	if not _is_spawn_system_ready():
 		return false
-	if _get_alive_enemy_count() >= max_alive_enemies:
+	if _count_alive_door_enemies() >= max_alive_enemies:
 		return false
 	
 	var spawn_point := _pick_spawn_point()
@@ -358,6 +359,7 @@ func _try_spawn_enemy() -> bool:
 		push_warning("敌人场景实例化失败，请检查 enemy_scene 设置.")
 		return false
 		
+	enemy_instance.set_meta("door_spawn", true)      # 打标记：这只算"红门刷出来的"
 	enemy_container.add_child(enemy_instance)
 	enemy_instance.global_position = spawn_point.global_position
 	enemy_instance.setup(enemy_cfg, player)
@@ -390,6 +392,17 @@ func _pick_enemy_config() -> EnemyConfig:
 	var random_index := random_generator.randi_range(0, available_enemy_configs.size() - 1)
 	return available_enemy_configs[random_index]
 	
+## 场上"从红门刷出来的"敌人数（只有它受 max_alive_enemies 限制）
+func _count_alive_door_enemies() -> int:
+	var count := 0
+	if enemy_container == null:
+		return 0
+	for child in enemy_container.get_children():
+		if child is Enemy and not (child as Enemy).is_dead and child.has_meta("door_spawn"):
+			count += 1
+	return count
+
+
 # 当前场上敌人数只统计 Enemy，避免掉落道具也挂在容器下时影响刷怪上限
 func _get_alive_enemy_count() -> int:
 	var alive_enemy_count := 0

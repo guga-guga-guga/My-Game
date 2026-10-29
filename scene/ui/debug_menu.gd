@@ -26,6 +26,7 @@ const MAIN_OPTIONS: Array[Dictionary] = [
 const BOSS_OPTIONS: Array[Dictionary] = [
 	{"id": "boss_floor5", "text": "第 5 关 BOSS", "hint": "原 BOSS / 紫 BOSS 随机一只"},
 	{"id": "boss_floor10", "text": "第 10 关 三重 BOSS", "hint": "同场 3 只 BOSS"},
+	{"id": "boss_floor15", "text": "第 15 关 三波 BOSS", "hint": "普通 x2 -> 紫 x2 -> 岩浆 x2，每波间隔 10 秒"},
 ]
 
 var _rows: Array[Label] = []          ## 一级选项文字

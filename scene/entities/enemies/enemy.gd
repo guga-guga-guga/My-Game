@@ -52,6 +52,20 @@ var _guard_chase_player := false
 #受击闪烁持续时间
 @export var hurt_blink_duration: float = 0.16
 
+## 朝向减伤（迷宫关专用）：正面挨打减伤、背面挨打加伤。默认关闭，由迷宫关刷怪时打开
+@export var directional_damage_enabled: bool = false
+@export var front_damage_mult: float = 0.2        ## 正面：只吃 20% 伤害（-80%）
+@export var back_damage_mult: float = 1.2         ## 背面：多吃 20% 伤害（+20%）
+## 被弹开时头顶的 MISS 提示
+@export var miss_popup_enabled: bool = true
+const MISS_FONT_SIZE := 7      # 用户要求：比原来(14)小一半
+const MISS_POPUP_TIME := 0.55
+var _last_player_hit_missed := false
+var _miss_count := 0
+
+const DIRECTIONAL_FRONT_DOT := 0.5                ## 点积 >= 0.5（±60°内）算正面
+const DIRECTIONAL_BACK_DOT := -0.5                ## 点积 <= -0.5（±60°内）算背面
+
 # ---- 迷宫关专用：视野锁定 ----
 ## 开启后：只有玩家在"自己正前方 90 度扇形、6 格内、且中间不被墙挡"时才会锁定玩家
 @export var vision_mode: bool = false
@@ -295,6 +309,11 @@ func set_airborne(value: bool) -> void:
 		current_path = PackedVector2Array()
 
 
+## 自爆敌人踩岩浆不掉血（用户要求：它们本身就在岩浆里活动）
+func is_lava_immune() -> bool:
+	return config != null and config.enemy_type == EnemyConfig.EnemyType.BOOOOMBER
+
+
 ## 立刻进入死亡/爆炸流程（自爆怪被投掷落地时调用；自爆敌会走到爆炸阶段）
 func explode_now() -> void:
 	_die()
@@ -459,9 +478,80 @@ func  _on_touch_damage_area_area_entered(area: Area2D) -> void:
 	var incoming_damage := DEFAULT_BULLET_DAMAGE
 	if area is Bullet:
 		incoming_damage = maxi((area as Bullet).damage, 1)
-	var damaged := apply_damage(incoming_damage)
-	if damaged:
-		bullet.queue_free()
+	# 子弹（玩家/队友的）走这个入口：迷宫关的敌人按朝向吃不同倍率
+	var damaged := apply_player_damage(incoming_damage, bullet.global_position)
+	if damaged or _last_player_hit_missed:
+		bullet.queue_free()          # 被弹开也算打中了，子弹一样要消失
+
+
+## 朝向减伤倍率：从 hit_from 这个位置打过来，是正面 / 侧面 / 背面
+## 返回 1.0 表示不吃倍率（没开机制、朝向还没确定、或者打到侧面）
+func damage_multiplier_from(hit_from: Vector2) -> float:
+	if not directional_damage_enabled:
+		return 1.0
+	var facing := _facing_vector()
+	if facing == Vector2.ZERO:
+		return 1.0
+	var to_source := global_position.direction_to(hit_from)
+	if to_source == Vector2.ZERO:
+		return 1.0
+	var dot := facing.dot(to_source)
+	if dot >= DIRECTIONAL_FRONT_DOT:
+		return front_damage_mult          # 从正面打来：减伤
+	if dot <= DIRECTIONAL_BACK_DOT:
+		return back_damage_mult           # 从背后打来：加伤
+	return 1.0                            # 侧面：原伤害
+
+
+## 玩家方（玩家/队友的子弹）造成的伤害：先按朝向换算倍率再结算
+## 换算后不足 1 点就当"被弹开"：不掉血，弹一个 MISS
+func apply_player_damage(amount: int, hit_from: Vector2) -> bool:
+	_last_player_hit_missed = false
+	if amount <= 0:
+		return false
+	var mult := damage_multiplier_from(hit_from)
+	var dealt := amount
+	if not is_equal_approx(mult, 1.0):
+		dealt = int(round(float(amount) * mult))
+	if dealt < 1:
+		_last_player_hit_missed = true
+		_show_miss_popup()
+		return false
+	return apply_damage(dealt)
+
+
+## 上一次玩家方伤害是不是被"弹开"了（0 伤害）
+func was_last_hit_missed() -> bool:
+	return _last_player_hit_missed
+
+
+## 自检用：一共弹了几次 MISS
+func debug_miss_count() -> int:
+	return _miss_count
+
+
+## 受击被弹开时，在敌人头顶弹一个小小的 MISS（上飘 + 淡出）
+func _show_miss_popup() -> void:
+	_miss_count += 1
+	if not miss_popup_enabled:
+		return
+	var label := Label.new()
+	label.name = "MissPopup"
+	label.text = "MISS"
+	label.z_index = 50
+	label.add_theme_font_size_override("font_size", MISS_FONT_SIZE)
+	label.add_theme_color_override("font_color", Color(0.93, 0.95, 1.0, 1.0))
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.9))
+	label.add_theme_constant_override("outline_size", 3)
+	label.position = Vector2(-MISS_FONT_SIZE * 1.3, -MISS_FONT_SIZE * 1.9)
+	add_child(label)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "position:y", label.position.y - 14.0, MISS_POPUP_TIME)
+	tween.tween_property(label, "modulate:a", 0.0, MISS_POPUP_TIME)
+	tween.chain().tween_callback(func() -> void:
+		if is_instance_valid(label):
+			label.queue_free())
 		
 #管理与玩家持续接触时的伤害冷却
 func _update_touch_damage(delta: float) -> void:

@@ -37,6 +37,7 @@ var _row_prices: Array[Label] = []
 var _selected := 0
 var _open := false
 var _open_frame := -1
+var slot := 0                     ## 这个商店是中间地图的第几个位置（0/1/2），限购按它各自算
 
 
 func is_open() -> bool:
@@ -157,7 +158,8 @@ func _make_row(index: int, title_text: String) -> void:
 	_row_prices.append(price_label)
 
 
-func open() -> void:
+func open(p_slot: int = 0) -> void:
+	slot = maxi(p_slot, 0)
 	_open = true
 	_open_frame = Engine.get_process_frames()
 	_selected = 0
@@ -175,8 +177,8 @@ func _refresh() -> void:
 		var key: String = ITEM_KEYS[index]
 		var price := RunState.shop_price(key)
 		var affordable := RunState.gold >= price
-		if RunState.shop_is_bought_this_floor(key):
-			affordable = false                        # 伤害/射速每层各限购 1 次
+		if RunState.shop_is_bought_this_floor(key, slot):
+			affordable = false                        # 伤害/射速：每个商店各限购 1 次
 		elif key == "heal":
 			affordable = affordable and RunState.current_health < RunState.max_health
 		elif key == "ally":
@@ -193,8 +195,8 @@ func _refresh() -> void:
 		_row_names[index].text = ("> " if chosen else "  ") + String(ITEM_TITLES[key])
 		_row_names[index].add_theme_color_override("font_color", name_color)
 		# 恢复血量：血满时显示"血量已满"，省得玩家以为能买
-		if RunState.shop_is_bought_this_floor(key):
-			_row_prices[index].text = "本层已买"
+		if RunState.shop_is_bought_this_floor(key, slot):
+			_row_prices[index].text = "本店已买"
 		elif key == "ally" and RunState.ally_count() > 0:
 			_row_prices[index].text = "已雇佣 %d/%d" % [RunState.ally_count(), RunState.MAX_ALLIES]
 		elif key == "heal" and RunState.current_health >= RunState.max_health:
@@ -218,8 +220,8 @@ func _activate_selected() -> void:
 		return
 	var key: String = ITEM_KEYS[_selected]
 	var price := RunState.shop_price(key)
-	if RunState.shop_is_bought_this_floor(key):
-		_message.text = "本层已经买过了"
+	if RunState.shop_is_bought_this_floor(key, slot):
+		_message.text = "这家店已经买过了 去另一家看看"
 		return
 	if key == "heal" and RunState.current_health >= RunState.max_health:
 		_message.text = "血量已满 不用买"
@@ -227,7 +229,7 @@ func _activate_selected() -> void:
 	if key == "ally" and RunState.ally_count() >= RunState.MAX_ALLIES:
 		_message.text = "队友已经满 %d 个了" % RunState.MAX_ALLIES
 		return
-	if not RunState.shop_buy(key):
+	if not RunState.shop_buy(key, slot):
 		_message.text = "金币不够 还差 %d" % maxi(price - RunState.gold, 0)
 		return
 	_message.text = "已购买 %s" % String(ITEM_TITLES[key])

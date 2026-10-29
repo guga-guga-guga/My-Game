@@ -228,24 +228,49 @@ func _on_option_pressed(index: int) -> void:
 	_activate(index)
 
 
+## 还在打字 / 还没翻到最后一句时，按移动键直接把选项拉出来（不再"按了没反应"）
+func _ensure_options_ready() -> void:
+	if _options_ready:
+		return
+	_text.visible_characters = -1
+	if not _lines.is_empty():
+		_line_index = _lines.size() - 1
+		_text.text = _lines[_line_index]
+	_set_options_ready(true)
+
+
 ## W/S、上下键切换选项（循环）
 func _move_selection(step: int) -> void:
-	if _buttons.is_empty() or not _options_ready:
+	if _buttons.is_empty():
 		return
+	_ensure_options_ready()          # 关键：不再因为"正在打字"就吞掉按键
 	_selected = wrapi(_selected + step, 0, _buttons.size())
 	_refresh_option_text()
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if not _open or Engine.get_process_frames() == _open_frame:
-		return                              # 开对话那一下的 E 不要立刻被吃掉
+## 处理一个输入事件：返回是否吃掉（中间地图 / 战斗都走这里，保证只处理一次）
+func handle_input_event(event: InputEvent) -> bool:
+	if not _open:
+		return false
+	var same_frame := Engine.get_process_frames() == _open_frame
 	if event.is_action_pressed("move_up") or event.is_action_pressed("ui_up"):
 		_move_selection(-1)
-	elif event.is_action_pressed("move_down") or event.is_action_pressed("ui_down"):
+		return true
+	if event.is_action_pressed("move_down") or event.is_action_pressed("ui_down"):
 		_move_selection(1)
-	elif event.is_action_pressed("interact") or event.is_action_pressed("ui_accept"):
+		return true
+	if event.is_action_pressed("interact") or event.is_action_pressed("ui_accept"):
+		if same_frame:
+			return false              # 开对话那一下的 E 不要立刻确认，避免误进关卡
 		_confirm()
-	else:
+		return true
+	return false
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not _open:
+		return
+	if not handle_input_event(event):
 		return
 	# 注意：_confirm() 里可能触发「进入关卡」-> 切场景，本节点会被摘出场景树，
 	# 此时 get_viewport() 返回 null。必须判空，否则报错 + 调试器断点会把游戏卡住。

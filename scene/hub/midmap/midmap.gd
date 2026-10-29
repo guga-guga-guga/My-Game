@@ -56,6 +56,7 @@ var _interact_lock := 0.0      # 对话刚关掉的那一帧 E 仍是"刚按下"
 
 
 func _ready() -> void:
+	RunState.save_run()                    # 进入中间地图自动存档
 	MusicManager.play_midmap()               # 大厅曲（Overworld）
 	# 所有调试开关只在调试构建生效：发布版（导出的 exe）自动隐藏
 	if OS.is_debug_build():
@@ -493,7 +494,11 @@ func _on_shop_closed() -> void:
 func _open_shop() -> void:
 	if _shop == null:
 		return
-	_shop.open()
+	# 记下这次进的是哪个位置的商店：同一层两个商店各自可以买一次强化
+	var slot := 0
+	if _active_npc != null:
+		slot = maxi(npcs.find(_active_npc), 0)
+	_shop.open(slot)
 	SfxPlayer.interact()
 	print("[MidMap] 打开商店 金币=%d" % RunState.gold)
 

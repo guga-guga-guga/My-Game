@@ -156,22 +156,24 @@ var _guard_hud_hp: Label = null
 var _boss_defeated := false
 var _boss: Enemy = null
 var _boss_nodes: Array[Node] = []
-## 第 10 层第二条血条（两只紫 BOSS + 它们的分身 共用一个血池）；第 5 层为 null
-var _boss_bar_extra: Sprite2D = null
 var _boss_lock_label: Label = null            ## 第一条血条右侧的锁血倒计时（9.5S）
-var _boss_lock_label_extra: Label = null      ## 第10层第二条血条用
 var _boss_lock_marker: ColorRect = null       ## 第一条血条上 50% 处的刻度线
-var _boss_lock_marker_extra: ColorRect = null
 var _boss_icon_main: Sprite2D = null
-var _boss_icon_extra: Sprite2D = null
+var _boss_bars_shifted := false               ## 是否已经为了多条血条把生命值显示下移过
 ## 紫色阵营（本体+分身）的血量上限总和：每只本体按 config.max_health 加，每生成一个分身按其血量加
 var _purple_shared_max: float = 0.0       ## 紫色阵营共用血条的上限（本体之和；分身不加）
 var _purple_shared_hp: float = 0.0        ## 紫色阵营共用血条当前值
 var _purple_family_killing: bool = false  ## 正在执行"全家同时死亡"（期间不按只算金币）
 ## 紫色共享血条每掉到下一个阈值就加 1 个分身（75% / 50% / 25%，共 3 个）
-var _purple_split_stage := 0
-var _purple_family_lock_left := 0.0      ## 紫色阵营锁血剩余时间（共享血池触发）
+var _purple_split_stage := 0        ## （兼容旧字段）已经分裂过的阶段数
+var _purple_split_stage_by_family: Dictionary = {}
+var _purple_family_lock_left := 0.0      ## （兼容旧字段）所有家族里最长的锁血剩余
 var _purple_family_lock_used := false
+## 按家族分开的血池与锁血状态（家族 0 / 家族 1 各自一份）
+var _purple_max_by_family: Dictionary = {}
+var _purple_hp_by_family: Dictionary = {}
+var _purple_lock_left_by_family: Dictionary = {}
+var _purple_lock_used_by_family: Dictionary = {}
 var _debug_win_started := false
 var _ally = null                  ## 第一个队友（兼容旧代码/自检）
 var _allies: Array = []           ## 本关所有队友（最多 RunState.MAX_ALLIES）
@@ -196,13 +198,12 @@ func _ready() -> void:
 		debug_instant_win = false
 		arena_mode_override = ""
 	random_generator.randomize()
+	# 岩浆 BOSS 靠这个组找到战斗场景（放岩浆/红门刷自爆兵），不加进来它就只能干瞪眼
+	add_to_group("battle")
 
 	# ① 目标必须先算:限时决定倒计时条长度 stage_duration 由 _setup_hud 读取 
 	goal = LevelGoal.build(_context_floor(), _context_node_type(), debug_goal_type)
-	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
-		MusicManager.play_boss()          # BOSS 战曲
-	else:
-		MusicManager.play_stage()         # 普通关/精英关曲
+	MusicManager.play_boss()              # 战斗一律用 1-29（用户要求：战斗时始终循环这一首）
 	stage_duration = LevelGoal.stage_duration(goal)
 	_waves = goal.get("waves", [])
 
@@ -290,6 +291,8 @@ func _ready() -> void:
 	if goal["type"] == LevelGoal.TYPE_BOSS:
 		_spawn_bosses_for_floor()
 		_start_boss_door_spawner()
+		if _context_floor() == RunState.MAX_FLOOR:
+			_start_boss_wave(1)          # 第 15 层：进关卡立刻开第 1 波
 	elif _waves.is_empty():
 		if goal["type"] == LevelGoal.TYPE_DEFEND:
 			pass                              # 守护关：等建造模式里点「开始关卡」再刷怪
@@ -692,6 +695,11 @@ func _process(delta: float) -> void:
 	_update_push_rooms(delta)
 	if not _maze_exit_cells.is_empty():
 		_update_maze(delta)
+	_update_temp_lava(delta)
+	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
+		_separate_bosses(delta)
+	if goal.get("type", "") == LevelGoal.TYPE_BOSS and _context_floor() == RunState.MAX_FLOOR:
+		_update_boss_waves(delta)
 	if goal.get("type", "") == LevelGoal.TYPE_DEFEND:
 		_update_defend_build(delta)
 		if not _defend_started:
@@ -762,7 +770,7 @@ func _on_boss_door_spawn() -> void:
 		maxi(boss_door_spawn_max, maxi(boss_door_spawn_min, 1)))
 	var spawned := 0
 	for _index in range(want):
-		if _count_alive_normal_enemies() >= boss_level_normal_enemy_cap:
+		if _count_alive_door_enemies() >= boss_level_normal_enemy_cap:
 			break
 		if _try_spawn_enemy():
 			spawned += 1
@@ -780,20 +788,8 @@ func _setup_boss_bar_icons(clock_bar: Sprite2D) -> void:
 	boss_hud.add_child(_boss_icon_main)
 	_boss_icon_main.position = Vector2(time_bar_left_edge_x - BOSS_ICON_GAP, clock_bar.position.y)
 
-	if not _is_multi_boss_floor():
-		return
-	# 第二条血条：直接复制第一条（同纹理/同缩放），往下挪一个行距
-	_boss_bar_extra = clock_bar.duplicate() as Sprite2D
-	_boss_bar_extra.name = "TimeBar2"
-	_boss_bar_extra.position = Vector2(clock_bar.position.x, clock_bar.position.y + BOSS_BAR_SPACING)
-	_boss_bar_extra.modulate = clock_bar.modulate
-	_boss_bar_extra.visible = false
-	boss_hud.add_child(_boss_bar_extra)
-	_boss_icon_extra = _make_boss_icon_sprite()
-	boss_hud.add_child(_boss_icon_extra)
-	_boss_icon_extra.position = Vector2(time_bar_left_edge_x - BOSS_ICON_GAP, _boss_bar_extra.position.y)
-	# 给第二条血条腾位置：玩家生命图标/数字整体下移
-	_move_life_display_down(BOSS_BAR_SPACING)
+	# 第二条及以后的血条由 _ensure_boss_bars 按"实际活着的 BOSS 条数"动态建，
+	# 建第一条额外血条时顺手把玩家生命值显示下移一行
 
 
 ## 血条左侧的怪物图片（先留空，等 BOSS 刷出来再贴第一帧纹理）
@@ -816,10 +812,6 @@ func _move_life_display_down(delta: float) -> void:
 
 
 ## 第 10 层才有两条血条（原 BOSS + 紫 BOSS 阵营）
-func _is_multi_boss_floor() -> bool:
-	return _context_floor() >= RunState.MAX_FLOOR
-
-
 ## Boss 关：从"离玩家最远的那个红门"里放出一只 Boss（复用出怪口的语义）
 ## 把整局成长（生命/伤害/射速）应用到玩家身上
 func _apply_run_state_to_player() -> void:
@@ -872,10 +864,13 @@ func _spawn_boss() -> void:
 		return
 	enemy_container.add_child(boss)
 	boss.add_to_group(BOSS_GROUP)          # 不占"普通敌人"名额
-	_boss = boss
+	if _boss == null or not is_instance_valid(_boss) or bool(_boss.is_dead):
+		_boss = boss
+	if not _boss_nodes.has(boss):
+		_boss_nodes.append(boss)
 	if "max_alive_minions" in boss:
 		boss.max_alive_minions = boss_level_normal_enemy_cap   # BOSS 抛小怪也守同一个上限
-	var spawn_cell := _farthest_spawn_cell_from(arena_data["player_spawn"])
+	var spawn_cell := _next_boss_spawn_cell()
 	boss.global_position = cell_to_world(spawn_cell)
 	boss.setup(_boss_config_for_floor(), player)
 	if boss.has_method("set_arena"):
@@ -891,6 +886,88 @@ func _spawn_boss() -> void:
 		Vector2(spawn_cell).distance_to(Vector2(arena_data["player_spawn"]))])
 	if debug_instant_boss_win:
 		_start_debug_instant_win()
+
+
+## 两只 BOSS 之间的最小间距（像素）：追人时互相挤开，免得叠成一坨看起来像一只
+const BOSS_MIN_SEPARATION := 24.0
+const BOSS_SEPARATION_SPEED := 110.0
+
+
+## 多只 BOSS 同场时（第 15 层最多 4 只紫 BOSS / 2 只岩浆 BOSS），每帧互相推开一点
+func _separate_bosses(delta: float) -> void:
+	var list: Array = []
+	for node in _boss_nodes_all():
+		if not is_instance_valid(node) or bool(node.get("is_dead")):
+			continue
+		var node2d := node as Node2D
+		if node2d == null:
+			continue
+		list.append(node2d)
+	if list.size() < 2:
+		return
+	var max_step := BOSS_SEPARATION_SPEED * delta
+	for i in range(list.size()):
+		var a: Node2D = list[i]
+		for j in range(i + 1, list.size()):
+			var b: Node2D = list[j]
+			var diff := b.global_position - a.global_position
+			var dist := diff.length()
+			if dist >= BOSS_MIN_SEPARATION:
+				continue
+			var dir := diff.normalized() if dist > 0.01 else Vector2.RIGHT.rotated(randf() * TAU)
+			# 每帧只推很小一点（不用 clamp_to_walkable，否则会被吸附到格心，画面一顿一顿的）
+			var push := minf(max_step, (BOSS_MIN_SEPARATION - dist) * 0.5)
+			a.global_position -= dir * push
+			b.global_position += dir * push
+
+
+## 场上所有活着的 BOSS（含紫 BOSS / 岩浆 BOSS）所占的格子
+func _boss_occupied_cells() -> Dictionary:
+	var occupied := {}
+	for node in _boss_nodes_all():
+		if not is_instance_valid(node) or bool(node.get("is_dead")):
+			continue
+		var node2d := node as Node2D
+		if node2d == null:
+			continue
+		occupied[arena_cell_at(node2d.global_position)] = true
+	return occupied
+
+
+## 多只 BOSS 同场时，依次取"离玩家最远、且没被占用"的格子，避免叠在一起
+func _next_boss_spawn_cell() -> Vector2i:
+	var occupied: Dictionary = _boss_occupied_cells()
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var grid: Array = arena_data["grid"]
+	# 以玩家"当前所在格"为参照（不是关卡开局位置），否则玩家跑远了 BOSS 会刷在脸上
+	var player_cell: Vector2i = arena_cell_at(player.global_position)
+	var min_gap := float(mini(int(arena_data["width"]), int(arena_data["height"]))) * 0.55
+	var best := _farthest_spawn_cell_from(player_cell)
+	var best_distance := Vector2(best).distance_to(Vector2(player_cell))
+	for y in range(1, h - 1):
+		for x in range(1, w - 1):
+			if int(grid[y * w + x]) != 0:
+				continue
+			var cell := Vector2i(x, y)
+			if occupied.has(cell):
+				continue
+			var distance := Vector2(cell).distance_to(Vector2(player_cell))
+			if distance < min_gap:
+				continue                       # 离玩家太近的格子直接不考虑
+			if distance > best_distance - 1.0 and distance <= best_distance:
+				best = cell
+				best_distance = distance
+	if occupied.has(best):
+		# 最近的空位兜底
+		for y in range(1, h - 1):
+			for x in range(1, w - 1):
+				if int(grid[y * w + x]) != 0:
+					continue
+				var cell2 := Vector2i(x, y)
+				if not occupied.has(cell2):
+					return cell2
+	return best
 
 
 ## Boss 出生点：优先取"离玩家最远的红门"；若还不够远（不足地图短边的一半），
@@ -929,6 +1006,15 @@ func _farthest_door_cell_from(cell: Vector2i) -> Vector2i:
 
 func _on_boss_defeated() -> void:
 	_boss_defeated = true
+	# BOSS 全部倒下后红门不再刷怪（用户要求）
+	if _living_boss_count() == 0:
+		var door_timer := get_node_or_null("BossDoorSpawnTimer") as Timer
+		if door_timer != null:
+			door_timer.stop()
+		if enemy_spawn_timer != null:
+			enemy_spawn_timer.stop()
+		if debug_print:
+			print("[Battle] BOSS 全部击败，红门停止刷怪")
 	var boss_gain := maxi(gold_per_boss_kill, 0)
 	RunState.add_gold(boss_gain)
 	_gold_gained += boss_gain
@@ -1000,32 +1086,12 @@ func _boss_hp_ratio() -> float:
 	return _main_boss_ratio()
 
 
-## 覆盖父类：Boss 关顶部条 = BOSS 血量条（第10层是两条）；其余关卡沿用倒计时
+## 覆盖父类：Boss 关顶部条 = 每个 BOSS 一条独立血条（有几个 BOSS 就几条）
 func _update_time_bar() -> void:
 	if goal.get("type", "") != LevelGoal.TYPE_BOSS or time_bar == null:
 		super._update_time_bar()
 		return
-	# 第一条：原 BOSS；第5层若随机到紫 BOSS，则和它的分身共用这条
-	var main_lock_left := _lock_left_of(_main_boss_body())
-	_apply_boss_bar(time_bar, _main_boss_ratio())
-	_apply_boss_lock_visual(time_bar, main_lock_left)
-	_update_boss_lock_hud(_boss_lock_label, _boss_lock_marker, main_lock_left)
-	_update_boss_bar_icon(_boss_icon_main, _main_boss_body())
-	var main_alive := _main_boss_current() > 0.0
-	time_bar.visible = main_alive
-	if _boss_icon_main != null:
-		_boss_icon_main.visible = main_alive and _boss_icon_main.texture != null
-	# 第二条（第10层）：两只紫 BOSS + 它们的分身 共用一个血池
-	if _boss_bar_extra != null:
-		var purple_alive := _purple_family_current() > 0.0
-		var purple_lock_left := _purple_lock_left()
-		_apply_boss_bar(_boss_bar_extra, _purple_family_ratio())
-		_apply_boss_lock_visual(_boss_bar_extra, purple_lock_left)
-		_update_boss_lock_hud(_boss_lock_label_extra, _boss_lock_marker_extra, purple_lock_left)
-		_update_boss_bar_icon(_boss_icon_extra, _purple_body())
-		_boss_bar_extra.visible = purple_alive
-		if _boss_icon_extra != null:
-			_boss_icon_extra.visible = purple_alive and _boss_icon_extra.texture != null
+	_refresh_boss_bars()
 
 
 ## 把某条血条按比例缩放（保持左边缘不动，从左往右缩短）
@@ -1050,8 +1116,13 @@ func _lock_left_of(node: Node) -> float:
 
 
 ## 紫色阵营（本体 + 分身）共用一条血条，锁血也按这条共享血池算
-func purple_family_lock_active() -> bool:
-	return _purple_family_lock_left > 0.0
+func purple_family_lock_active(family: int = -1) -> bool:
+	if family < 0:
+		for value in _purple_lock_left_by_family.values():
+			if float(value) > 0.0:
+				return true
+		return false
+	return float(_purple_lock_left_by_family.get(family, 0.0)) > 0.0
 
 
 ## 紫色共享血条右侧倒计时读的秒数
@@ -1061,33 +1132,39 @@ func _purple_lock_left() -> float:
 
 ## 紫色阵营共用一份 HP：所有本体/分身的伤害都扣这一份血（用户要求）
 ## 返回值 = 这次伤害是否真的生效（锁血期间 / 打不动时为 false）
-func purple_family_apply_damage(amount: int) -> bool:
-	if amount <= 0 or _purple_shared_max <= 0.0 or _purple_shared_hp <= 0.0:
+func purple_family_apply_damage(amount: int, family: int = 0) -> bool:
+	var fam_max := float(_purple_max_by_family.get(family, 0.0))
+	var fam_hp := float(_purple_hp_by_family.get(family, 0.0))
+	if amount <= 0 or fam_max <= 0.0 or fam_hp <= 0.0:
 		return false
-	if _purple_family_lock_left > 0.0:
-		return false                                   # 全家锁血中：伤害无效
+	if float(_purple_lock_left_by_family.get(family, 0.0)) > 0.0:
+		return false                                   # 这个家族锁血中：伤害无效
 	var deal := amount
-	if not _purple_family_lock_used:
-		# 会把共享血条打到 50% 以下的那一击：截断到刚好 50%（避免一发放倒）
-		var floor_hp := _purple_shared_max * PURPLE_LOCK_RATIO
-		if _purple_shared_hp > floor_hp:
-			deal = mini(deal, int(ceil(_purple_shared_hp - floor_hp)))
+	if not bool(_purple_lock_used_by_family.get(family, false)):
+		# 会把血条打到 50% 以下的那一击：截断到刚好 50%（避免一发放倒）
+		var floor_hp := fam_max * PURPLE_LOCK_RATIO
+		if fam_hp > floor_hp:
+			deal = mini(deal, int(ceil(fam_hp - floor_hp)))
 	if deal <= 0:
 		return false
-	_purple_shared_hp = maxf(_purple_shared_hp - float(deal), 0.0)
-	if not _purple_family_lock_used and _purple_shared_hp <= _purple_shared_max * PURPLE_LOCK_RATIO:
-		_start_purple_family_lock()
-	if _purple_shared_hp <= 0.0:
-		_kill_purple_family()
+	fam_hp = maxf(fam_hp - float(deal), 0.0)
+	_purple_hp_by_family[family] = fam_hp
+	if not bool(_purple_lock_used_by_family.get(family, false)) 			and fam_hp <= fam_max * PURPLE_LOCK_RATIO:
+		_start_purple_family_lock(family)
+	if fam_hp <= 0.0:
+		_kill_purple_family(family)
 	return true
 
 
 ## 共用血条见底：所有本体 + 分身同时死亡、不掉道具；只在第 5 层出现时给 30 金币
-func _kill_purple_family() -> void:
+func _kill_purple_family(family: int = -1) -> void:
 	if _purple_family_killing:
 		return
 	_purple_family_killing = true
-	var bodies := _purple_nodes()
+	var bodies: Array = []
+	for node in _purple_nodes():
+		if family < 0 or int(node.get("family_id")) == family:
+			bodies.append(node)
 	for node in bodies:
 		if not is_instance_valid(node):
 			continue
@@ -1102,13 +1179,20 @@ func _kill_purple_family() -> void:
 		if debug_print:
 			print("[Battle] 紫色 BOSS（第 5 层）阵亡：不掉道具，金币 +%d（合计 %d）" % [gain, RunState.gold])
 	else:
+		# 其它层（第 15 层第二波等）：按普通 BOSS 的金币给，每个家族一份
+		var gain2 := maxi(gold_per_boss_kill, 0)
+		RunState.add_gold(gain2)
+		_gold_gained += gain2
 		if debug_print:
-			print("[Battle] 紫色 BOSS 阵亡：不掉道具、不给金币")
+			print("[Battle] 紫色家族 %d 阵亡：不掉道具，金币 +%d（合计 %d）" % [
+				family, gain2, RunState.gold])
 
 
-func _start_purple_family_lock() -> void:
-	if _purple_family_lock_used:
+func _start_purple_family_lock(family: int = 0) -> void:
+	if bool(_purple_lock_used_by_family.get(family, false)):
 		return
+	_purple_lock_used_by_family[family] = true
+	_purple_lock_left_by_family[family] = PURPLE_LOCK_TIME
 	_purple_family_lock_used = true
 	_purple_family_lock_left = PURPLE_LOCK_TIME
 	print("[Battle] 紫 BOSS 共享血池到 50%%：全家锁血 %.0f 秒（移速 +%.0f%%）" % [
@@ -1118,15 +1202,14 @@ func _start_purple_family_lock() -> void:
 func _update_purple_family_lock(delta: float) -> void:
 	if _purple_nodes().is_empty():
 		return
-	# 兜底：共享血池已经到 50% 但没走过伤害截断（例如分裂后重算）也要触发
-	if not _purple_family_lock_used and _purple_shared_max > 0.0:
-		if _purple_family_ratio() <= PURPLE_LOCK_RATIO:
-			_start_purple_family_lock()
-	if _purple_family_lock_left <= 0.0:
-		return
-	_purple_family_lock_left = maxf(_purple_family_lock_left - delta, 0.0)
-	if _purple_family_lock_left <= 0.0:
-		print("[Battle] 紫 BOSS 共享血池锁血结束")
+	var longest := 0.0
+	for family in _purple_hp_by_family.keys():
+		var left := float(_purple_lock_left_by_family.get(family, 0.0))
+		if left > 0.0:
+			left = maxf(left - delta, 0.0)
+			_purple_lock_left_by_family[family] = left
+			longest = maxf(longest, left)
+	_purple_family_lock_left = longest
 
 
 ## 血条 50% 处画一条刻度线 + 右侧一个倒计时文字（9.5S），提醒"打到这就会锁血"
@@ -1136,9 +1219,6 @@ func _setup_boss_lock_hud(clock_bar: Sprite2D) -> void:
 		return
 	_boss_lock_marker = _make_boss_lock_marker(hud, clock_bar)
 	_boss_lock_label = _make_boss_lock_label(hud, clock_bar)
-	if _boss_bar_extra != null:
-		_boss_lock_marker_extra = _make_boss_lock_marker(hud, _boss_bar_extra)
-		_boss_lock_label_extra = _make_boss_lock_label(hud, _boss_bar_extra)
 
 
 func _make_boss_lock_marker(hud: Node2D, bar: Sprite2D) -> ColorRect:
@@ -1163,19 +1243,27 @@ func _make_boss_lock_label(hud: Node2D, bar: Sprite2D) -> Label:
 	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.85))
 	label.visible = false
 	hud.add_child(label)
-	# 放在血条右端外侧（血条左边缘固定，右端 = 左边缘 + 满宽）
+	# 固定在"满宽血条的右端外侧"（不跟着变短的血条往左跑，否则会跑到血条中间甚至左边）
 	var right_x := time_bar_left_edge_x + time_bar_texture_width * time_bar_full_scale_x
 	label.position = Vector2(right_x + BOSS_LOCK_LABEL_GAP,
 			bar.position.y - BOSS_LOCK_FONT_SIZE * 0.75)
+	label.set_meta("anchor_x", label.position.x)
 	return label
 
 
 ## 锁血期间：刻度线变金黄、右侧显示剩余秒数（9.5S）；没锁血时隐藏文字、刻度线变淡
-func _update_boss_lock_hud(label: Label, marker: ColorRect, lock_left: float) -> void:
+func _update_boss_lock_hud(label: Label, marker: ColorRect, lock_left: float,
+		bar: Sprite2D = null) -> void:
 	if label != null:
 		label.visible = lock_left > 0.0
 		if lock_left > 0.0:
 			label.text = "%.1fS" % lock_left
+			# x 固定用满宽血条的右端（建标签时记下来的 anchor_x），血条变短也不左移
+			if label.has_meta("anchor_x"):
+				label.position.x = float(label.get_meta("anchor_x"))
+			elif bar != null:
+				label.position.x = (time_bar_left_edge_x
+					+ time_bar_texture_width * time_bar_full_scale_x + BOSS_LOCK_LABEL_GAP)
 	if marker != null:
 		marker.color = BOSS_BAR_LOCK_COLOR if lock_left > 0.0 else Color(1.0, 1.0, 1.0, 0.35)
 
@@ -1201,10 +1289,13 @@ func _boss_lock_left() -> float:
 
 ## 血条左侧的怪物图片：第一次拿到纹理后就不再改
 func _update_boss_bar_icon(icon: Sprite2D, node: Node) -> void:
-	if icon == null:
+	if icon == null or node == null:
 		return
-	if icon.texture == null and node != null:
-		icon.texture = _boss_icon_texture(node)
+	var body_id := node.get_instance_id()
+	if int(icon.get_meta("body_id", 0)) == body_id and icon.texture != null:
+		return
+	icon.set_meta("body_id", body_id)
+	icon.texture = _boss_icon_texture(node)
 
 
 ## 第一条血条追踪的对象：第5层可能是原 BOSS 或紫 BOSS
@@ -1212,10 +1303,27 @@ func _main_boss_body() -> Node:
 	return _boss
 
 
+## 第二只 BOSS（第 15 层多 BOSS 同场时给第二条血条用）
+func _second_boss_body() -> Node:
+	for node in _boss_nodes:
+		if node != _boss and is_instance_valid(node) and not bool(node.is_dead):
+			return node
+	return null
+
+
+## 这个节点是哪种 BOSS：normal / purple / lava；不是 BOSS 返回空串
+func _boss_kind_of(node: Node) -> String:
+	if node == null or not is_instance_valid(node):
+		return ""
+	if not node.has_method("boss_kind"):
+		return ""
+	return String(node.call("boss_kind"))
+
+
 func _main_boss_current() -> float:
 	if _boss == null or not is_instance_valid(_boss):
 		return 0.0
-	if _boss.has_method("debug_splits_done"):
+	if _boss_kind_of(_boss) == "purple":
 		return _purple_family_current()
 	return maxf(float(_boss.current_health), 0.0)
 
@@ -1223,7 +1331,7 @@ func _main_boss_current() -> float:
 func _main_boss_ratio() -> float:
 	if _boss == null or not is_instance_valid(_boss):
 		return 0.0
-	if _boss.has_method("debug_splits_done"):
+	if _boss_kind_of(_boss) == "purple":
 		return _purple_family_ratio()
 	if _boss.config == null:
 		return 0.0
@@ -1236,20 +1344,42 @@ func _purple_nodes() -> Array[Node]:
 	for child in enemy_container.get_children():
 		if not is_instance_valid(child):
 			continue
-		if child.has_method("debug_splits_done") and not bool(child.get("is_dead")):
+		if _boss_kind_of(child) == "purple" and not bool(child.get("is_dead")):
 			nodes.append(child)
 	return nodes
 
 
 ## 共用血条当前值（本体 + 分身同吃这一份）
 func _purple_family_current() -> float:
-	return _purple_shared_hp
+	var total := 0.0
+	for value in _purple_hp_by_family.values():
+		total += float(value)
+	return total
+
+
+## 某个家族的血条比例 / 当前值 / 锁血剩余
+func _purple_family_current_of(family: int) -> float:
+	return float(_purple_hp_by_family.get(family, 0.0))
+
+
+func _purple_family_ratio_of(family: int) -> float:
+	var fam_max := float(_purple_max_by_family.get(family, 0.0))
+	if fam_max <= 0.0:
+		return 0.0
+	return clampf(float(_purple_hp_by_family.get(family, 0.0)) / fam_max, 0.0, 1.0)
+
+
+func _purple_lock_left_of(family: int) -> float:
+	return float(_purple_lock_left_by_family.get(family, 0.0))
 
 
 func _purple_family_ratio() -> float:
-	if _purple_shared_max <= 0.0:
+	var total_max := 0.0
+	for value in _purple_max_by_family.values():
+		total_max += float(value)
+	if total_max <= 0.0:
 		return 0.0
-	return clampf(_purple_shared_hp / _purple_shared_max, 0.0, 1.0)
+	return clampf(_purple_family_current() / total_max, 0.0, 1.0)
 
 
 ## 显示图片用的紫色本体
@@ -1262,23 +1392,45 @@ func _purple_body() -> Node:
 
 ## 紫色共享血条掉到 75% / 50% / 25% 时，各从一只存活的本体处分裂出 1 个分身（共 3 个）
 func _update_purple_splits() -> void:
-	if _purple_split_stage >= PURPLE_SPLIT_THRESHOLDS.size() or _purple_shared_max <= 0.0:
-		return
-	if _purple_family_ratio() > PURPLE_SPLIT_THRESHOLDS[_purple_split_stage]:
-		return
-	_purple_split_stage += 1
-	var body := _pick_alive_purple_body()
-	if body != null and body.has_method("spawn_clone_now"):
-		body.spawn_clone_now()
-		if debug_print:
-			print("[Battle] 紫色共享血条到 %.0f%%，加 1 个分身（第 %d 个）" % [
-				PURPLE_SPLIT_THRESHOLDS[_purple_split_stage - 1] * 100.0, _purple_split_stage])
+	# 每个家族各自按自己的血条比例分裂：同一家族的若干只 BOSS 共用一个血池
+	for family in _purple_max_by_family.keys():
+		var stage := int(_purple_split_stage_by_family.get(family, 0))
+		if stage >= PURPLE_SPLIT_THRESHOLDS.size():
+			continue
+		if _purple_family_ratio_of(family) > PURPLE_SPLIT_THRESHOLDS[stage]:
+			continue
+		# 家族场上已经有 PURPLE_MAX_BODIES_PER_FAMILY 只就不再分裂（4 = 1 本体 + 3 分身）
+		if _alive_bodies_of_family(family) >= PURPLE_MAX_BODIES_PER_FAMILY:
+			_purple_split_stage_by_family[family] = stage + 1
+			continue
+		_purple_split_stage_by_family[family] = stage + 1
+		var body := _pick_alive_purple_body(family)
+		if body != null and body.has_method("spawn_clone_now"):
+			body.spawn_clone_now()
+			if debug_print:
+				print("[Battle] 紫色家族 %d 血条到 %.0f%%，加 1 个分身" % [
+					family, PURPLE_SPLIT_THRESHOLDS[stage] * 100.0])
 
 
-## 从存活的本体里挑一个来生成分身（分身不作为分裂来源）
-func _pick_alive_purple_body() -> Node:
+## 某个家族还活着几只紫 BOSS（本体 + 分身）
+func _alive_bodies_of_family(family: int) -> int:
+	var count := 0
+	for node in _purple_nodes():
+		if int(node.get("family_id")) == family:
+			count += 1
+	return count
+
+
+## 从某个家族存活的本体里挑一个来生成分身（分身不作为分裂来源）
+func _pick_alive_purple_body(family: int = -1) -> Node:
 	for node in _boss_nodes:
-		if is_instance_valid(node) and not bool(node.get("is_dead")) and not bool(node.get("is_clone")):
+		if not is_instance_valid(node):
+			continue
+		if _boss_kind_of(node) != "purple":
+			continue                     # 只从紫 BOSS 里挑（普通/岩浆 BOSS 没有家族）
+		if family >= 0 and int(node.get("family_id")) != family:
+			continue
+		if not bool(node.get("is_dead")) and not bool(node.get("is_clone")):
 			return node
 	return null
 
@@ -1434,12 +1586,13 @@ func _goal_state() -> Dictionary:
 		"time_left": stage_time_left,
 		"waves_done": _waves_done,
 		"waves_total": _waves.size(),
-		"boss_defeated": _living_boss_count() == 0,   # 三重 BOSS：全部家族归零才算达成
+		"boss_defeated": _living_boss_count() == 0 and _boss_waves_finished(),
 		"boss_hp_ratio": _boss_hp_ratio(),          # M3:Boss 死亡时由 Boss 置真
 		"guard_alive": _guard_target != null and is_instance_valid(_guard_target) and not _guard_target.is_dead,
 		"push_arrived": _push_arrived,
 		"push_progress": int(_push_box.moved_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
 		"push_total": int(_push_box.total_cells()) if _push_box != null and is_instance_valid(_push_box) else 0,
+		"alive_enemies": _get_alive_enemy_count(),
 		"maze_exited": _maze_exited,
 		"maze_elapsed": _maze_elapsed,
 	}
@@ -1523,7 +1676,10 @@ const SHOOTER_CONFIG := preload("res://resources/config/enemy_shooter.tres")
 const DEFEND_MAX_ALIVE := 30
 const DEFEND_RAMP_TIME := 90.0
 const PURPLE_BOSS_SCENE := "res://scene/entities/bosses/boss_purple.tscn"
+const LavaBossScene := preload("res://scene/entities/bosses/boss_lava.tscn")
 const PURPLE_SPLIT_THRESHOLDS: Array[float] = [0.75, 0.50, 0.25]  ## 共享血条掉到这些比例各加 1 个分身
+## 一个紫色家族场上最多几只（本体 + 分身）：1 本体时正好分裂 3 个分身 = 4 只
+const PURPLE_MAX_BODIES_PER_FAMILY := 4
 const BOSS_ICON_ATLAS := "res://resources/texture/源石虫.png"
 const NORMAL_BOSS_ICON_ROW_Y := 32    ## 原 BOSS 的血条图片用源石虫.png 第 2 排（用户指定）
 const BOSS_BAR_SPACING := 16.0        ## 第10层第二条血条相对第一条下移的世界单位（相机4倍 -> 屏幕64px）
@@ -1552,12 +1708,16 @@ const BOSS_LOCK_MARKER_HEIGHT := 11.0           ## 怪物图片中心到血条�
 func _spawn_bosses_for_floor() -> void:
 	_boss_nodes.clear()
 	var floor_now := _context_floor()
-	if RunState.is_final_floor() or floor_now >= RunState.MAX_FLOOR:
+	if floor_now == 10:
 		_spawn_boss()
+		# 两只紫 BOSS 用同一个家族号：共用一个血池 = 一条血条（和拆家族之前的表现一致）
 		_spawn_purple_boss(1)
-		_spawn_purple_boss(2)
+		_spawn_purple_boss(1)
 		print("[Battle] 第 10 层：三重 BOSS（原 BOSS + 紫 BOSS x2）")
 		_spawn_final_floor_shooters(4)      # 开局再放 4 个持枪敌人（用户要求）
+	elif RunState.is_final_floor() or floor_now >= RunState.MAX_FLOOR:
+		# 第 15 层：交给波次系统（_update_boss_waves 里按三波依次放 BOSS）
+		print("[Battle] 第 %d 层：三波 BOSS 演出（普通 x2 -> 紫 x2 -> 岩浆 x2）" % floor_now)
 	else:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = RunState.run_seed + floor_now * 7919   # 加入本局随机种子：每局都可能出紫 BOSS
@@ -1611,7 +1771,7 @@ func _spawn_purple_boss(family: int) -> void:
 		return
 	enemy_container.add_child(purple)
 	purple.add_to_group(BOSS_GROUP)        # 不占"普通敌人"名额
-	var spawn_cell: Vector2i = _spawn_cell_for_family(arena_data["player_spawn"], family)
+	var spawn_cell: Vector2i = _spawn_cell_for_family(arena_cell_at(player.global_position), family)
 	purple.global_position = cell_to_world(spawn_cell)
 	purple.setup(_boss_config_for_purple(), player)
 	if "family_id" in purple:
@@ -1624,9 +1784,13 @@ func _spawn_purple_boss(family: int) -> void:
 	purple.died.connect(_on_purple_boss_died)
 	# 紫色阵营共用一个血池：本体先记一份 max，之后每生成一个分身再加它那份
 	if purple.config != null:
-		# 共用一份 HP：本体（第 5 层 1 只 / 第 10 层 2 只）各贡献一份血，分身不再加血
-		_purple_shared_max += float(purple.config.max_health)
-		_purple_shared_hp = _purple_shared_max
+		# 同一家族的紫 BOSS 共用一份血：每个本体贡献一份血，分身不再加血
+		var fam_max := (float(_purple_max_by_family.get(family, 0.0))
+			+ float(purple.config.max_health))
+		_purple_max_by_family[family] = fam_max
+		_purple_hp_by_family[family] = fam_max
+		_purple_shared_max = fam_max
+		_purple_shared_hp = fam_max
 	if purple.has_signal("clone_spawned"):
 		purple.clone_spawned.connect(_on_purple_clone_spawned)
 	if debug_print:
@@ -1661,7 +1825,7 @@ func _boss_nodes_all() -> Array[Node]:
 		var node := child as Node
 		if node == null:
 			continue
-		if node == _boss or node.has_method("debug_splits_done"):
+		if node == _boss or _boss_kind_of(node) != "" or _boss_nodes.has(node):
 			nodes.append(node)
 	return nodes
 
@@ -1681,8 +1845,27 @@ func _living_boss_count() -> int:
 func _boss_icon_texture(body: Node) -> Texture2D:
 	if body == null:
 		return null
+	# 紫 BOSS / 岩浆 BOSS 用各自的精灵帧（紫=第3排，岩浆=偏红的那只）
+	for path in ["AnimatedSprite2D", "AnimatedSprite", "BodySprite"]:
+		var own_sprite := body.get_node_or_null(path) as AnimatedSprite2D
+		if own_sprite == null or own_sprite.sprite_frames == null:
+			continue
+		var own_names := own_sprite.sprite_frames.get_animation_names()
+		if own_names.is_empty():
+			continue
+		# 优先用站立/移动动画的第一帧（岩浆 BOSS 还有一套 death 动画，按名字排序会先取到死亡帧）
+		var anim_name: String = own_names[0]
+		for candidate in ["default", "idle", "walk", "move"]:
+			if own_sprite.sprite_frames.has_animation(candidate):
+				anim_name = candidate
+				break
+		var own_tex := own_sprite.sprite_frames.get_frame_texture(anim_name, 0)
+		# 紫 BOSS / 岩浆 BOSS 用自己的精灵帧；普通 BOSS 下面统一用固定素材
+		if own_tex != null and _boss_kind_of(body) != "normal":
+			return own_tex
+		break
 	# 原 BOSS：血条图片固定用源石虫.png 第 2 排（用户指定，不用它自己的素材）
-	if not body.has_method("debug_splits_done"):
+	if _boss_kind_of(body) == "normal":
 		var atlas := load(BOSS_ICON_ATLAS) as Texture2D
 		if atlas != null:
 			var frame := AtlasTexture.new()
@@ -1702,17 +1885,29 @@ func _boss_icon_texture(body: Node) -> Texture2D:
 
 
 ## 取"第 index 远"的红门格：多只 BOSS 时不要全挤在同一个格子上
+## 紫 BOSS 出生点：优先用"离玩家最远的红门"，同一家族第二只自动错开到别的门
 func _spawn_cell_for_family(from_cell: Vector2i, index: int) -> Vector2i:
 	var doors: Array = arena_data.get("doors", [])
 	if doors.is_empty():
-		return _farthest_spawn_cell_from(from_cell)
+		return _next_boss_spawn_cell()
+	var occupied := _boss_occupied_cells()
+	var player_cell: Vector2i = arena_cell_at(player.global_position)
+	var min_gap := float(mini(int(arena_data["width"]), int(arena_data["height"]))) * 0.4
 	var cells: Array[Vector2i] = []
-	for door in doors:
-		cells.append(door["cell"])
+	for i in range(doors.size()):
+		var door: Dictionary = doors[(i + index) % doors.size()]
+		var cell: Vector2i = door["cell"]
+		if occupied.has(cell):
+			continue                             # 已经有 BOSS 站这儿了，换下一个门
+		if Vector2(cell).distance_to(Vector2(player_cell)) < min_gap:
+			continue                             # 离玩家太近的门不用，免得 BOSS 刷在脸上
+		cells.append(cell)
+	if cells.is_empty():
+		return _next_boss_spawn_cell()
 	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
 		return Vector2(a).distance_to(Vector2(from_cell)) \
 			> Vector2(b).distance_to(Vector2(from_cell)))
-	return cells[clampi(index, 0, cells.size() - 1)]
+	return cells[0]
 
 
 
@@ -2544,6 +2739,18 @@ func _update_enemy_lava(delta: float) -> void:
 			continue
 		var id := enemy.get_instance_id()
 		alive_ids[id] = true
+		# 自爆敌人整体免疫岩浆地板伤害（它们本来就在岩浆里活动）
+		if enemy.is_lava_immune():
+			_enemy_lava_time.erase(id)
+			continue
+		# 刚由岩浆 BOSS 从岩浆里放出来的自爆兵，先给它 1 秒免疫（否则冒头就被烧死）
+		if enemy.has_meta("lava_immune_left"):
+			var immune_left := float(enemy.get_meta("lava_immune_left")) - delta
+			enemy.set_meta("lava_immune_left", immune_left)
+			if immune_left > 0.0:
+				_enemy_lava_time.erase(id)
+				continue
+			enemy.remove_meta("lava_immune_left")
 		if not is_lava_at(enemy.global_position):
 			_enemy_lava_time.erase(id)
 			continue
@@ -2662,6 +2869,7 @@ func _spawn_maze_enemies() -> void:
 		enemy.global_position = cell_to_world(spawn_cell)
 		enemy.setup(config, player)
 		enemy.vision_mode = true          # 迷宫关：视野被墙挡住就看不见玩家
+		enemy.directional_damage_enabled = true   # 迷宫关：正面减伤 / 背面加伤
 		enemy.died.connect(_on_enemy_died)
 		spawned += 1
 	if debug_print:
@@ -2986,14 +3194,7 @@ func _update_defend_build(delta: float) -> void:
 		_set_build_mode(not _build_mode)
 		return
 	if _guard_dialogue != null and _guard_dialogue.is_open():
-		# 对话框的 _unhandled_input 在战斗里会被上面的输入逻辑抢掉，所以这里代为处理
-		if Input.is_action_just_pressed("move_up"):
-			_guard_dialogue.debug_move(-1)
-		elif Input.is_action_just_pressed("move_down"):
-			_guard_dialogue.debug_move(1)
-		elif Input.is_action_just_pressed("interact"):
-			_guard_dialogue.debug_confirm()
-		return
+		return                                   # 对话里的按键由 _unhandled_input 转发
 	if not _build_mode:
 		_update_guard_prompt()
 		_try_guard_dialogue()
@@ -3248,6 +3449,29 @@ func _update_guard_prompt() -> void:
 
 
 ## 和守护对象对话：选「开始关卡」才正式开局
+## 守护对象对话框的按键：事件驱动转发给对话框（以前是每帧轮询 Input，偶尔会漏按键）
+func _unhandled_input(event: InputEvent) -> void:
+	if _guard_dialogue == null or not is_instance_valid(_guard_dialogue):
+		return
+	if not _guard_dialogue.is_open():
+		return
+	if _guard_dialogue.handle_input_event(event):
+		var viewport := get_viewport()
+		if viewport != null:
+			viewport.set_input_as_handled()
+
+
+## 建好守护对象的对话框（懒加载，只建一次）
+func _ensure_guard_dialogue() -> void:
+	if _guard_dialogue != null:
+		return
+	_guard_dialogue = DialogueBoxScript.new()
+	add_child(_guard_dialogue)
+	_guard_dialogue.option_selected.connect(_on_guard_dialogue_option)
+	_guard_dialogue.closed.connect(_on_guard_dialogue_closed)
+	_guard_dialogue.set_process_unhandled_input(false)   # 输入由 battle 转发，避免处理两次
+
+
 func _try_guard_dialogue() -> void:
 	if _defend_started:
 		return
@@ -3260,12 +3484,7 @@ func _try_guard_dialogue() -> void:
 		return
 	if not Input.is_action_just_pressed("interact"):
 		return
-	if _guard_dialogue == null:
-		_guard_dialogue = DialogueBoxScript.new()
-		add_child(_guard_dialogue)
-		_guard_dialogue.option_selected.connect(_on_guard_dialogue_option)
-		_guard_dialogue.closed.connect(_on_guard_dialogue_closed)
-		_guard_dialogue.set_process_unhandled_input(false)   # 输入由 battle 代为处理
+	_ensure_guard_dialogue()
 	player.set_physics_process(false)
 	_guard_dialogue.show_dialogue("守护对象",
 		["准备好的话就开始吧。", "开始之后就不能再回来改建了。"],
@@ -3340,3 +3559,365 @@ func _build_cursor_frame() -> void:
 		bar.size = bar_data[1]
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_build_frame.add_child(bar)
+
+
+# ============================ 暂时岩浆地板 + 第 15 层波次 ============================
+
+@export_group("BOSS 岩浆与波次")
+## 暂时岩浆持续多少秒后恢复原材质
+@export var temp_lava_seconds: float = 8.0
+## 波次之间（第 15 层）的缓冲秒数
+@export var boss_wave_gap_seconds: float = 10.0
+
+## 暂时岩浆按"格子"记账：同一格被多只岩浆 BOSS 反复点着时，只记第一次变岩浆前的材质，
+## 剩余时间取更长的那个，避免互相覆盖导致"永久岩浆"或"提前恢复"
+var _temp_lava_origin: Dictionary = {}    ## cell(Vector2i) -> 原地面材质(Vector2i)
+var _temp_lava_left: Dictionary = {}      ## cell(Vector2i) -> 剩余秒数
+var _boss_wave: int = 0                   ## 第 15 层当前波次（1/2/3）
+var _boss_wave_gap_left: float = 0.0      ## 波次缓冲剩余秒数
+var _boss_wave_pending: bool = false
+
+
+## 把世界坐标夹到地图内最近的可行走格（防止敌人生成到地图外）
+func clamp_to_walkable(world_position: Vector2) -> Vector2:
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var grid: Array = arena_data["grid"]
+	var cell := Vector2i(clampi(int(floor(world_position.x / 16.0)), 1, w - 2),
+		clampi(int(floor(world_position.y / 16.0)), 1, h - 2))
+	if int(grid[cell.y * w + cell.x]) == 0:
+		return cell_to_world(cell)
+	for radius in range(1, 8):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				var probe := cell + Vector2i(int(dx), int(dy))
+				if probe.x <= 0 or probe.y <= 0 or probe.x >= w - 1 or probe.y >= h - 1:
+					continue
+				if int(grid[probe.y * w + probe.x]) == 0:
+					return cell_to_world(probe)
+	return cell_to_world(cell)
+
+
+## 把一片格子暂时变成岩浆，到点恢复成原来的地面材质
+func temp_lava(cells: Array, duration: float = -1.0, skip_corners: bool = false) -> void:
+	var ground := $GroundTileMapLayer as TileMapLayer
+	if ground == null or cells.is_empty():
+		return
+	var use_time := duration if duration > 0.0 else temp_lava_seconds
+	var w: int = int(arena_data["width"])
+	var h: int = int(arena_data["height"])
+	var touched := 0
+	for cell in cells:
+		var c: Vector2i = cell
+		if skip_corners and _is_box_corner(cells, c):
+			continue                              # 5x5 砸地的四角保持正常地板
+		if c.x <= 0 or c.y <= 0 or c.x >= w - 1 or c.y >= h - 1:
+			continue
+		if not _temp_lava_origin.has(c):
+			# 只记第一次变岩浆前的真实材质，之后的重叠都沿用这一份
+			_temp_lava_origin[c] = ground.get_cell_atlas_coords(c)
+		_temp_lava_left[c] = maxf(float(_temp_lava_left.get(c, 0.0)), use_time)
+		_set_ground_tile(c, ArenaGen.TILE_FLOOR_LAVA)
+		touched += 1
+	if touched == 0:
+		return
+
+
+func _is_box_corner(cells: Array, cell: Vector2i) -> bool:
+	if cells.size() != 25:
+		return false
+	var min_x := 99999
+	var min_y := 99999
+	var max_x := -99999
+	var max_y := -99999
+	for c in cells:
+		min_x = mini(min_x, (c as Vector2i).x)
+		max_x = maxi(max_x, (c as Vector2i).x)
+		min_y = mini(min_y, (c as Vector2i).y)
+		max_y = maxi(max_y, (c as Vector2i).y)
+	var at_x_edge: bool = cell.x == min_x or cell.x == max_x
+	var at_y_edge: bool = cell.y == min_y or cell.y == max_y
+	return at_x_edge and at_y_edge
+
+
+func _update_temp_lava(delta: float) -> void:
+	if _temp_lava_left.is_empty():
+		return
+	var ground := $GroundTileMapLayer as TileMapLayer
+	for cell in _temp_lava_left.keys():
+		var left := float(_temp_lava_left[cell]) - delta
+		if left > 0.0:
+			_temp_lava_left[cell] = left
+			continue
+		_temp_lava_left.erase(cell)
+		var origin = _temp_lava_origin.get(cell)
+		_temp_lava_origin.erase(cell)
+		if ground != null and origin != null:
+			ground.set_cell(cell, ArenaGen.GROUND_SOURCE, origin)
+
+
+## 以某个格子为中心的 5x5 区块（给岩浆 BOSS 砸地用）
+func cells_around_cell(center: Vector2i) -> Array:
+	var out: Array = []
+	for dy in range(-2, 3):
+		for dx in range(-2, 3):
+			var cell := center + Vector2i(int(dx), int(dy))
+			if cell.x <= 0 or cell.y <= 0:
+				continue
+			if cell.x >= int(arena_data["width"]) - 1 or cell.y >= int(arena_data["height"]) - 1:
+				continue
+			out.append(cell)
+	return out
+
+
+## 第 15 层三波是否已经全部打完（其它层直接返回 true）
+func _boss_waves_finished() -> bool:
+	if _context_floor() != RunState.MAX_FLOOR:
+		return true
+	return _boss_wave >= 3 and not _boss_wave_pending
+
+
+## 第 15 层的波次推进
+func _update_boss_waves(delta: float) -> void:
+	if _context_floor() != RunState.MAX_FLOOR:
+		return
+	if _boss_wave_pending:
+		_boss_wave_gap_left = maxf(_boss_wave_gap_left - delta, 0.0)
+		if _boss_wave_gap_left <= 0.0:
+			_boss_wave_pending = false
+			_start_boss_wave(_boss_wave + 1)
+		return
+	if _living_boss_count() > 0:
+		return
+	if _boss_wave >= 3:
+		return                               # 三波都打完，等清场
+	if _boss_wave == 0:
+		return                               # 第一波在 _ready 里已经开过了
+	# 本波 BOSS 全灭：前两波顺手清场（不给金币），然后进入缓冲
+	if _boss_wave < 3:
+		_clear_field_without_reward()
+	_boss_wave_pending = true
+	_boss_wave_gap_left = boss_wave_gap_seconds
+	if debug_print:
+		print("[Battle] 第 %d 波结束，%.0f 秒后第 %d 波" % [_boss_wave, boss_wave_gap_seconds, _boss_wave + 1])
+
+
+func _start_boss_wave(wave: int) -> void:
+	_boss_wave = wave
+	match wave:
+		1:
+			print("[Battle] 第 15 层 第 1 波：两只普通 BOSS")
+			_spawn_boss()
+			_spawn_boss()
+			_spawn_final_floor_shooters(4)
+		2:
+			print("[Battle] 第 15 层 第 2 波：四只紫 BOSS（家族 0 x2 + 家族 1 x2，两条血条）")
+			_spawn_purple_boss(0)
+			_spawn_purple_boss(0)
+			_spawn_purple_boss(1)
+			_spawn_purple_boss(1)
+		_:
+			print("[Battle] 第 15 层 第 3 波：两只岩浆 BOSS")
+			_spawn_lava_boss(0)
+			_spawn_lava_boss(1)
+
+
+## 生成一只岩浆 BOSS（第 15 层第三波）
+func _spawn_lava_boss(index: int) -> void:
+	var boss = LavaBossScene.instantiate()
+	enemy_container.add_child(boss)
+	var spawn_cell := _next_boss_spawn_cell()
+	boss.global_position = cell_to_world(spawn_cell)
+	var config: EnemyConfig = BossConfig.duplicate()
+	config.max_health = maxi(int(round(float(BossConfig.max_health) * 1.2)), 1)
+	boss.setup(config, player)
+	if boss.has_method("set_arena"):
+		boss.set_arena(arena_data["grid"], int(arena_data["width"]), int(arena_data["height"]))
+	if "debug_fast_skills" in boss:
+		boss.debug_fast_skills = debug_fast_boss
+	if boss.has_signal("boss_defeated"):
+		boss.boss_defeated.connect(_on_boss_defeated)
+	if not boss.died.is_connected(_on_enemy_died):
+		boss.died.connect(_on_enemy_died)
+	_boss_nodes.append(boss)
+	if debug_print:
+		print("[Battle] 岩浆 BOSS #%d 已放出：血量 %d，位置 %s" % [index, config.max_health, str(spawn_cell)])
+
+
+## 从岩浆里爬出来的自爆兵：血量和移速各提升 50%
+const LAVA_BOMBER_STAT_BOOST := 1.5
+
+
+## 从"暂时岩浆"格子里刷 1 只自爆兵（岩浆 BOSS 锁血期间用）
+## 不用 _try_spawn_enemy：那条路会被场上普通敌人上限卡住，这里直接放行
+func spawn_bomber_at_lava(fallback_center: Vector2i = Vector2i(-1, -1)) -> Node:
+	var bomber: Enemy = preload("res://scene/entities/enemies/enemy.tscn").instantiate() as Enemy
+	if bomber == null:
+		return null
+	# 优先从"暂时岩浆"的格子里钻出来
+	var lava_cells: Array = []
+	for cell in _temp_lava_left.keys():
+		lava_cells.append(cell)
+	var spawn_cell := Vector2i(-1, -1)
+	if not lava_cells.is_empty():
+		spawn_cell = lava_cells[randi() % lava_cells.size()]
+	elif fallback_center != Vector2i(-1, -1):
+		spawn_cell = fallback_center
+	if spawn_cell == Vector2i(-1, -1):
+		return null
+	# 刚从岩浆里爬出来：先打标记再入树（入树信号里就能认出它是"岩浆里刷的"），
+	# 并给它 1 秒岩浆免疫，否则一冒头就被自己脚下的岩浆烧掉
+	bomber.set_meta("lava_immune_left", 1.0)
+	enemy_container.add_child(bomber)
+	var jitter := Vector2(randf_range(-5.0, 5.0), randf_range(-5.0, 5.0))
+	bomber.global_position = clamp_to_walkable(cell_to_world(spawn_cell) + jitter)
+	# 从岩浆里爬出来的自爆兵更强：血量 +50%、移速 +50%（用户要求）
+	var cfg: EnemyConfig = preload("res://resources/config/enemy_bomber.tres").duplicate()
+	cfg.max_health = maxi(int(round(float(cfg.max_health) * LAVA_BOMBER_STAT_BOOST)), 1)
+	cfg.move_speed = float(cfg.move_speed) * LAVA_BOMBER_STAT_BOOST
+	bomber.setup(cfg, player)
+	bomber.died.connect(_on_enemy_died)
+	return bomber
+
+
+## 把场上其他敌人直接干掉，但不给金币、不算击杀
+func _clear_field_without_reward() -> void:
+	for child in enemy_container.get_children():
+		if not (child is Enemy):
+			continue
+		var enemy: Enemy = child
+		if enemy.is_dead or enemy.has_method("set_arena"):
+			continue                                  # 跳过 BOSS 本体
+		enemy.drop_disabled = true
+		enemy.current_health = 0
+		enemy.queue_free()
+	if debug_print:
+		print("[Battle] 波次切换：清掉场上杂兵（不给金币、不计击杀）")
+
+
+# ============================ 多条 BOSS 血条（有几个 BOSS 就有几条） ============================
+
+## 每一条血条一行：{bar, marker, label, icon}
+var _boss_bars: Array = []
+
+
+## 按需要补齐血条行数（第一行用现成的 time_bar，其余复制它）
+func _ensure_boss_bars(count: int) -> void:
+	if time_bar == null:
+		return
+	if _boss_bars.is_empty():
+		_boss_bars.append({
+			"bar": time_bar,
+			"marker": _boss_lock_marker,
+			"label": _boss_lock_label,
+			"icon": _boss_icon_main,
+		})
+	while _boss_bars.size() < count:
+		var row_index := _boss_bars.size()
+		var bar := time_bar.duplicate() as Sprite2D
+		bar.name = "BossBar%d" % row_index
+		bar.position = Vector2(time_bar.position.x,
+			time_bar.position.y + BOSS_BAR_SPACING * float(row_index))
+		time_bar.get_parent().add_child(bar)
+		bar.visible = true
+		bar.scale = Vector2(time_bar_full_scale_x, time_bar.scale.y)
+		bar.modulate = time_bar.modulate
+		bar.z_index = time_bar.z_index
+		if debug_print:
+			print("[Battle] 新建 BOSS 血条 #%d（位置 %s）" % [row_index, str(bar.position)])
+		var hud := $Player/HUDLayer as Node2D
+		var marker: ColorRect = null
+		var label: Label = null
+		var icon: Sprite2D = null
+		if hud != null:
+			marker = _make_boss_lock_marker(hud, bar)
+			label = _make_boss_lock_label(hud, bar)
+			icon = Sprite2D.new()
+			icon.name = "BossBarIcon%d" % row_index
+			icon.position = Vector2(time_bar_left_edge_x - BOSS_ICON_GAP, bar.position.y)
+			hud.add_child(icon)
+		_boss_bars.append({"bar": bar, "marker": marker, "label": label, "icon": icon})
+		if not _boss_bars_shifted:
+			_boss_bars_shifted = true
+			_move_life_display_down(BOSS_BAR_SPACING)   # 给第二条血条腾位置
+
+
+## 场上还活着的 BOSS（紫 BOSS 家族共用一个血池，只算一条）
+func _live_boss_entries() -> Array:
+	var out: Array = []
+	var purple_families: Dictionary = {}
+	# 用统一的 BOSS 列表（含紫 BOSS、岩浆 BOSS），而不是只看 enemy_container 的直接子节点
+	for child in _boss_nodes_all():
+		if not (child is Enemy):
+			continue
+		var boss: Enemy = child
+		if boss.is_dead:
+			continue
+		if _boss_kind_of(boss) == "purple":
+			# 紫 BOSS 按家族出条：同一家族的若干只共用一个血池 = 一条血条
+			var family := int(boss.get("family_id"))
+			if purple_families.has(family):
+				continue
+			purple_families[family] = true
+			out.append({"node": boss, "ratio": _purple_family_ratio_of(family),
+				"lock": _purple_lock_left_of(family)})
+		else:
+			var ratio := 0.0
+			if boss.config != null:
+				ratio = clampf(float(boss.current_health)
+					/ float(maxi(int(boss.config.max_health), 1)), 0.0, 1.0)
+			var lock := float(boss.get("_hp_lock_left")) if "_hp_lock_left" in boss else 0.0
+			out.append({"node": boss, "ratio": ratio, "lock": lock})
+	return out
+
+
+## 刷新全部 BOSS 血条：有几只活 BOSS 就显示几条，各自独立掉血
+func _refresh_boss_bars() -> void:
+	var entries := _live_boss_entries()
+	_ensure_boss_bars(maxi(entries.size(), 1))
+	for i in range(_boss_bars.size()):
+		var row: Dictionary = _boss_bars[i]
+		var bar := row["bar"] as Sprite2D
+		# 第 0 行的白线/文字/图标是 _setup_boss_bar_icons 里后建的，
+		# 这里每帧重新取一次，避免一开始抓到 null 就再也显示不出来
+		if i == 0:
+			row["marker"] = _boss_lock_marker
+			row["label"] = _boss_lock_label
+			row["icon"] = _boss_icon_main
+		var marker := row["marker"] as ColorRect
+		var label := row["label"] as Label
+		var icon := row["icon"] as Sprite2D
+		if bar == null:
+			continue
+		if i >= entries.size():
+			bar.visible = false
+			if marker != null:
+				marker.visible = false
+			if label != null:
+				label.visible = false
+			if icon != null:
+				icon.visible = false
+			# 第 15 层两波之间的缓冲：在血条原来的位置显示倒计时
+			if i == 0 and _boss_wave_pending and label != null:
+				label.visible = true
+				label.text = "下一波 %.1fS" % maxf(_boss_wave_gap_left, 0.0)
+				label.position = Vector2(time_bar.position.x - 40.0, bar.position.y - 8.0)
+			continue
+		var entry: Dictionary = entries[i]
+		var node = entry["node"]
+		var ratio := float(entry["ratio"])
+		var lock := float(entry["lock"])
+		_apply_boss_bar(bar, ratio)
+		_apply_boss_lock_visual(bar, lock)
+		bar.position.y = time_bar.position.y + BOSS_BAR_SPACING * float(i)
+		bar.visible = true
+		if marker != null:
+			marker.visible = true
+			marker.color = BOSS_BAR_LOCK_COLOR if lock > 0.0 else Color(1.0, 1.0, 1.0, 0.35)
+		if label != null:
+			label.visible = lock > 0.0
+			if lock > 0.0:
+				label.text = "%.1fS" % lock
+		if icon != null:
+			_update_boss_bar_icon(icon, node)
+			icon.visible = icon.texture != null

@@ -159,6 +159,10 @@ func state_name() -> String:
 func _physics_process(delta: float) -> void:
 	if is_dead:
 		return
+	if _chase_target != null and not is_instance_valid(_chase_target):
+		_chase_target = null            # 目标被释放了：直接丢掉，别拿着悬空引用继续用
+	if _leash_center != null and not is_instance_valid(_leash_center):
+		_leash_center = null            # 活动范围中心被释放（临时友方的关卡结束）同理
 	if _player == null or not is_instance_valid(_player) or _player.get("is_dead"):
 		velocity = Vector2.ZERO
 		move_and_slide()
@@ -258,7 +262,9 @@ func _update_chase_target(delta: float) -> void:
 
 
 ## 目标还活着、还在搜索半径内，才算有效
-func _is_valid_chase_target(node: Node2D) -> bool:
+## 参数故意不写类型：目标可能已经被释放，写成 Node2D 会在进入函数前就抛
+## "Invalid type ... previously freed"，根本走不到 is_instance_valid 这一步
+func _is_valid_chase_target(node) -> bool:
 	if node == null or not is_instance_valid(node):
 		return false
 	if bool(node.get("is_dead")) or not node.has_method("apply_damage"):
@@ -433,7 +439,9 @@ func _nearest_usable_pickup() -> Node2D:
 	return best
 
 
-func _pickup_is_usable(pickup: Node2D) -> bool:
+func _pickup_is_usable(pickup) -> bool:
+	if pickup == null or not is_instance_valid(pickup):
+		return false
 	var config = pickup.get("config")
 	if config == null:
 		return false

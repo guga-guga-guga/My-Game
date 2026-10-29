@@ -98,6 +98,12 @@ func _build_ui() -> void:
 	run_button.pressed.connect(_on_start_run_button_pressed)
 	_button_bar.add_child(run_button)
 
+	# 有存档时在「开始游戏」下面多一个「继续游戏」（原按钮整体上移一格）
+	if RunState.has_save():
+		var continue_button := _make_button("继续游戏", "ContinueRunButton")
+		continue_button.pressed.connect(_on_continue_run_button_pressed)
+		_button_bar.add_child(continue_button)
+
 	var start_button := _make_button("经典模式", "StartButton")
 	start_button.pressed.connect(_on_start_button_pressed)
 	_button_bar.add_child(start_button)
@@ -341,6 +347,13 @@ func _on_start_button_pressed() -> void:
 func _on_quit_button_pressed() -> void:
 	SfxPlayer.ui_click()
 	get_tree().quit()
+
+## 继续游戏：读档后直接回到存档所在的中间地图
+func _on_continue_run_button_pressed() -> void:
+	if not RunState.load_run():
+		return
+	GameFlow.goto_midmap()
+
 
 func _on_start_run_button_pressed() -> void:
 	SfxPlayer.ui_click()

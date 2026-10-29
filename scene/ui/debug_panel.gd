@@ -136,6 +136,7 @@ func _build_ui() -> void:
 		_build_row(index, ROWS[index])
 	_build_hire_row()
 	_build_debug_level_row()
+	_build_next_floor_row()
 
 
 ## 一行数值：名称 + [-100][-10][-1][+1][+10][+100] + 可输入的数值框
@@ -154,7 +155,10 @@ func _build_row(index: int, def: Dictionary) -> void:
 
 	var entry := {"key": key, "name": name_label, "box": null, "buttons": []}
 	# A/D 在这几个按钮之间左右切换，E 按下选中的那个
-	var deltas: Array[int] = [-STEP_BIG, -STEP_MID, -STEP_SMALL, STEP_SMALL, STEP_MID, STEP_BIG]
+	# 用户要求：除了金币，其它行的加减最多只到 10（不显示 ±100 的按钮）
+	var deltas: Array[int] = [-STEP_MID, -STEP_SMALL, STEP_SMALL, STEP_MID]
+	if key == "gold":
+		deltas = [-STEP_BIG, -STEP_MID, -STEP_SMALL, STEP_SMALL, STEP_MID, STEP_BIG]
 	var buttons: Array[Button] = []
 	for delta in deltas:
 		var button := Button.new()
@@ -221,6 +225,39 @@ func _build_debug_level_row() -> void:
 
 	_selectable.append({"kind": "debug_level", "key": "debug_level", "deltas": [],
 			"buttons": [level_button], "control": level_box})
+
+
+## 「进入下一层」：层数 +1 后回中间地图（调试用，省得一层层打过去）
+func _build_next_floor_row() -> void:
+	var row := HBoxContainer.new()
+	row.name = "NextFloorRow"
+	_rows_box.add_child(row)
+	var button := Button.new()
+	button.name = "NextFloorButton"
+	button.text = "进入下一层"
+	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN   # 靠左，不撑满
+	button.custom_minimum_size = Vector2(150.0, 36.0)
+	button.focus_mode = Control.FOCUS_NONE
+	button.add_theme_font_size_override("font_size", FONT_ROW)
+	button.pressed.connect(_go_next_floor)
+	row.add_child(button)
+	_selectable.append({"kind": "next_floor", "key": "next_floor", "deltas": [],
+			"buttons": [button], "control": row})
+
+
+## 只做"层数 +1"这一步（自检用；已是最后一层就停住，不会溢出）
+func debug_advance_floor() -> int:
+	if not RunState.is_active:
+		RunState.reset()                     # 还没开局：先当新开一局
+	RunState.advance_floor()                 # 内部已经按 MAX_FLOOR 夹住了
+	return RunState.floor_index
+
+
+## 点「进入下一层」：层数 +1（已是最后一层就停住），然后回中间地图
+func _go_next_floor() -> void:
+	print("[DebugPanel] 调试：进入第 %d 层" % debug_advance_floor())
+	close_panel()                            # 先解除暂停，再换场景
+	GameFlow.goto_midmap()
 
 
 func open_panel() -> void:
@@ -572,6 +609,11 @@ func debug_start_level(level_id: String) -> void:
 			RunState.reset()
 			RunState.floor_index = 6
 			GameFlow.start_battle({"floor": 6, "node_type": "defend"})
+		"boss_floor15":
+			print("[DebugPanel] 调试: 进第 15 层三波 BOSS 关")
+			RunState.reset()
+			RunState.floor_index = RunState.MAX_FLOOR
+			GameFlow.start_battle({"floor": RunState.MAX_FLOOR, "node_type": "boss"})
 		"boss_floor10":
 			print("[DebugPanel] 调试: 进第 10 层三重 BOSS 关")
 			RunState.reset()
@@ -649,6 +691,8 @@ func _activate_selected() -> void:
 		_adjust_ally(int(action[0]), String(action[1]), int(action[2]))
 	elif kind == "debug_level":
 		_on_debug_menu_button_pressed()
+	elif kind == "next_floor":
+		_go_next_floor()
 
 
 func _refresh_all() -> void:
@@ -940,6 +984,18 @@ func debug_row_keys() -> Array[String]:
 	for entry in _entries:
 		keys.append(String(entry["key"]))
 	return keys
+
+
+## 自检用：某一行的加减按钮文案（例如 ["-10", "-1", "+1", "+10"]）
+func debug_row_buttons(key: String) -> Array[String]:
+	var texts: Array[String] = []
+	for entry in _entries:
+		if String(entry["key"]) != key:
+			continue
+		for button in entry["buttons"]:
+			texts.append(String((button as Button).text))
+		break
+	return texts
 
 
 func debug_selected_key() -> String:

@@ -94,7 +94,9 @@ static func build(floor_index: int, node_type: String, forced_type: String = "")
 		goal["conditions"].append({"type": TYPE_CLEAR_WAVES, "target": wave_count, "label": "清空 %d 波敌人" % wave_count})
 
 	elif type == TYPE_BOSS:
+		# BOSS 关：BOSS 打完还要把场上清干净（用户要求）
 		goal["conditions"].append({"type": TYPE_BOSS, "target": 1, "label": "击败 Boss"})
+		goal["conditions"].append({"type": "clear_field", "target": 0, "label": "清空场上敌人"})
 
 	elif type == TYPE_DEFEND:
 		# 守护关：撑满 120 秒 + 守护对象存活，两个条件 ALL
@@ -160,6 +162,8 @@ static func progress_text(goal: Dictionary, state: Dictionary) -> String:
 				parts.append("BOSS 已击败")
 			else:
 				parts.append("BOSS %d%%" % int(round(float(state.get("boss_hp_ratio", 1.0)) * 100.0)))
+		elif type == "clear_field":
+			parts.append("剩余敌人 %d" % int(state.get("alive_enemies", 0)))
 		elif type == TYPE_DEFEND:
 			if bool(state.get("guard_alive", false)):
 				parts.append("守护对象存活")
@@ -192,6 +196,9 @@ static func is_satisfied(goal: Dictionary, state: Dictionary) -> bool:
 				return false
 		elif type == TYPE_BOSS:
 			if not bool(state.get("boss_defeated", false)):
+				return false
+		elif type == "clear_field":
+			if int(state.get("alive_enemies", 0)) > 0:
 				return false
 		elif type == TYPE_DEFEND:
 			if not bool(state.get("guard_alive", false)):

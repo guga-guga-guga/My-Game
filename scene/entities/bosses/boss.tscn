@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://b3xg27xxan0tt"]
 
-[ext_resource type="Script" path="res://scene/entities/bosses/boss.gd" id="1_f87vc"]
+[ext_resource type="Script" path="res://scene/entities/bosses/boss_normal.gd" id="1_f87vc"]
 [ext_resource type="Shader" uid="uid://bmic8r1gcdgoj" path="res://scene/fx/blink.gdshader" id="2_8u16h"]
 [ext_resource type="AudioStream" uid="uid://bxg85csvvfct" path="res://resources/audio/cowboy_explosion.wav" id="3_yvcfn"]
 [ext_resource type="AudioStream" uid="uid://cwaerctu47oia" path="res://resources/audio/cowboy_monsterhit.wav" id="4_ulb22"]
@@ -28,7 +28,7 @@ radius = 6.0
 resource_local_to_scene = true
 radius = 8.0
 
-[node name="Boss" type="CharacterBody2D" unique_id=957551584]
+[node name="BossNormal" type="CharacterBody2D" unique_id=957551584]
 collision_layer = 4
 script = ExtResource("1_f87vc")
 

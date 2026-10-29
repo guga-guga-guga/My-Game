@@ -1,4 +1,4 @@
-extends "res://scene/entities/enemies/enemy.gd"
+extends "res://scene/entities/bosses/boss_enemy.gd"
 ## 家族锁血期间移速加成（锁血由 battle 按"紫色阵营共享血池"统一触发）
 const FAMILY_LOCK_SPEED_BONUS := 0.2
 ## 紫色 BOSS（第 5 层 50% 随机 / 第 10 层固定 2 只）
@@ -39,7 +39,6 @@ var family_id := 0
 var can_split := true                 ## 分身设为 false -> 不能再分裂
 var is_clone := false
 
-var _invulnerable := false
 var _teleport_cd := 0.0
 var _teleport_left := 0.0
 var _teleport_flash_spawned := false
@@ -53,8 +52,14 @@ var _splits_done := 0
 
 func _ready() -> void:
 	super._ready()
-	add_to_group("boss_enemy")   # 紫 BOSS（含分身）不占"场上普通敌人"名额
+	# 紫色 BOSS 不用阶段机（血量由战斗侧的家族血池统一管），也不吃基类的半血锁血
+	phases_enabled = false
+	half_hp_lock_time = 0.0
 	_setup_purple_visuals()
+
+
+func boss_kind() -> String:
+	return "purple"
 
 
 ## 注意：父类 setup() 会用配置里的 enemy_frames 覆盖精灵，所以紫色素材/放大/碰撞
@@ -105,7 +110,7 @@ func apply_damage(amount: int) -> bool:
 	# 扣完由 battle 让所有本体/分身同时死亡（用户要求）
 	var battle := _family_battle()
 	if battle != null and battle.has_method("purple_family_apply_damage"):
-		var applied := bool(battle.call("purple_family_apply_damage", amount))
+		var applied := bool(battle.call("purple_family_apply_damage", amount, family_id))
 		if applied:
 			_start_hurt_blink()
 			_play_sfx(hit_sfx_player)
@@ -119,7 +124,7 @@ func _get_move_speed() -> float:
 	if _speed_left > 0.0:
 		speed *= SPEED_MULTIPLIER            # 加速技能：移速 ×2（SPEED_MULTIPLIER 原来没被用上）
 	var battle := _family_battle()
-	if battle != null and bool(battle.call("purple_family_lock_active")):
+	if battle != null and bool(battle.call("purple_family_lock_active", family_id)):
 		speed *= (1.0 + FAMILY_LOCK_SPEED_BONUS)   # 家族锁血期间再 +20%
 	return speed
 
@@ -144,27 +149,24 @@ func is_invulnerable() -> bool:
 	return _invulnerable
 
 
-func _physics_process(delta: float) -> void:
+## 每个物理帧的行为机（移动由基类的 _move_step 负责）
+func _boss_update(delta: float) -> void:
 	_teleport_cd = maxf(_teleport_cd - delta, 0.0)
 	_speed_cd = maxf(_speed_cd - delta, 0.0)
 	if is_dead:
-		super._physics_process(delta)
 		return
 
 	# 瞬移流程（蓄力中不移动、不吃伤害）
 	if _teleport_left > 0.0:
 		_update_teleport(delta)
-		super._physics_process(delta)
 		return
 	if _recover_left > 0.0:
 		_recover_left = maxf(_recover_left - delta, 0.0)
 		if _recover_left <= 0.0:
 			set_ai_suspended(false)
-		super._physics_process(delta)
 		return
 
 	_update_speed_boost(delta)
-	super._physics_process(delta)
 	_try_start_skills()
 
 

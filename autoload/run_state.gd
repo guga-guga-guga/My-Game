@@ -10,9 +10,9 @@ signal health_changed(current: int, maximum: int)
 signal floor_changed(floor_index: int)
 
 ## 总层数 含最终 Boss 层 
-const MAX_FLOOR := 10
+const MAX_FLOOR := 15
 ## 固定 BOSS 层（第 5 层是中途 BOSS，第 10 层是最终 BOSS）
-const BOSS_FLOORS: Array[int] = [5, 10]
+const BOSS_FLOORS: Array[int] = [5, 10, 15]
 
 ## 玩家基础数值:升级只加在"基础值"上，限时道具仍是独立倍率 三层数值，互不污染 
 const BASE_MAX_HEALTH := 3
@@ -154,8 +154,8 @@ func midmap_kinds(index: int = -1) -> Array[String]:
 	var pool: Array[String] = ["elite", "battle", "shop"]
 	if target_floor > 5:
 		pool.append("defend")          # 守护关：第 5 层之后才会出现（用户要求）
-	if target_floor > 1:
-		pool.append("push")            # 推车关：从第 2 层起随机出现（用户要求）
+	if target_floor > 10:
+		pool.append("push")            # 推车关：只在第 10 层之后出现（用户要求）
 	if target_floor > 2:
 		pool.append("maze")            # 迷宫关：从第 3 层起随机出现
 	for _slot in range(3):
@@ -230,15 +230,21 @@ const SHOP_PRICE_GROWTH := 0.5       ## 每买一次涨价 = 初始价的 50%
 ## 本局各商品已买次数 key -> int 
 var shop_buy_count: Dictionary = {}
 
-## 每层商店限购一次的强化（用户要求：伤害提升 / 射速提升 每层各只能买一次）
+## 每个商店限购一次的强化（用户要求：伤害提升 / 射速提升 每个商店各只能买一次）
 const SHOP_ONCE_PER_FLOOR: Array[String] = ["fire_rate", "damage"]
-## 本层已经买过的强化 key -> bool（换层 / 新开一局时清空）
+## 本层每个商店已经买过的强化："<商店格位>:<商品>" -> bool（换层 / 新开一局时清空）
+## 一层有三个位置，BOSS 层是 商店 - BOSS - 商店，所以那两个商店可以各买一次同样的强化
 var shop_bought_this_floor: Dictionary = {}
 
 
-## 这个强化本层商店是不是已经买过了
-func shop_is_bought_this_floor(key: String) -> bool:
-	return bool(shop_bought_this_floor.get(key, false))
+## 限购记录的键：按"哪个商店 + 哪个商品"，不同商店之间互不影响
+func _shop_bought_key(key: String, slot: int) -> String:
+	return "%d:%s" % [slot, key]
+
+
+## 这个强化在这个商店里是不是已经买过了（slot = 该商店在中间地图的位置：0/1/2）
+func shop_is_bought_this_floor(key: String, slot: int = 0) -> bool:
+	return bool(shop_bought_this_floor.get(_shop_bought_key(key, slot), false))
 
 ## 最多同时拥有 3 名队友（用户要求）
 const MAX_ALLIES := 3
@@ -301,7 +307,7 @@ func shop_price(key: String) -> int:
 
 
 ## 买一件：钱不够返回 false（不扣钱也不加属性）
-func shop_buy(key: String) -> bool:
+func shop_buy(key: String, slot: int = 0) -> bool:
 	if key == "ally":
 		# 雇佣队友：最多 3 个（用户要求）
 		if ally_roster.size() >= MAX_ALLIES:
@@ -321,8 +327,8 @@ func shop_buy(key: String) -> bool:
 		return true
 	if not SHOP_KEYS.has(key):
 		return false
-	if SHOP_ONCE_PER_FLOOR.has(key) and shop_is_bought_this_floor(key):
-		return false                                  # 伤害/射速每层各限买 1 次
+	if SHOP_ONCE_PER_FLOOR.has(key) and shop_is_bought_this_floor(key, slot):
+		return false                                  # 伤害/射速：每个商店各限买 1 次
 	if not try_spend_gold(shop_price(key)):
 		return false
 	match key:
@@ -334,7 +340,8 @@ func shop_buy(key: String) -> bool:
 			buy_damage()
 	shop_buy_count[key] = int(shop_buy_count.get(key, 0)) + 1
 	if SHOP_ONCE_PER_FLOOR.has(key):
-		shop_bought_this_floor[key] = true
+		shop_bought_this_floor[_shop_bought_key(key, slot)] = true
+	save_run()                                  # 买完立刻存一次：大厅里退出也不会丢这笔消费
 	return true
 
 
@@ -353,8 +360,108 @@ func shop_level(key: String) -> int:
 func finish_run(did_clear: bool) -> void:
 	cleared = did_clear
 	is_active = false
+	delete_save()                     # 一局结束（通关或失败）就删档，标题不再显示继续游戏
 	# 一局只写一条战绩（M4 闯关模式原来完全没写，开始界面右侧的"最近战绩"一直是空的）
 	if not _record_written:
 		_record_written = true
 		RoundRecords.add_record(run_elapsed, total_kills, did_clear, floor_index, gold)
 	run_finished.emit(did_clear)
+
+
+# ============================ 自动存档（进中间地图时） ============================
+
+const SAVE_PATH := "user://run_save.json"
+
+
+## 是否有可以继续的存档
+func has_save() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
+
+
+## 进入中间地图时自动存一次：把玩家此刻拥有的东西全存下来
+func save_run() -> bool:
+	if not is_active:
+		return false
+	var data := {
+		"version": 1,
+		"floor_index": floor_index,
+		"run_seed": run_seed,
+		"gold": gold,
+		"total_kills": total_kills,
+		"run_elapsed": run_elapsed,
+		"max_health": max_health,
+		"current_health": current_health,
+		"player_damage": player_damage,
+		"fire_rate_level": fire_rate_level,
+		"speed_level": speed_level,
+		"bonus_max_health": bonus_max_health,
+		"move_speed_multiplier": move_speed_multiplier,
+		"fire_rate_multiplier": fire_rate_multiplier,
+		"bonus_invincibility": bonus_invincibility,
+		"ally_roster": ally_roster.duplicate(true),
+		"shop_bought_this_floor": shop_bought_this_floor.duplicate(true),
+		"shop_buy_count": shop_buy_count.duplicate(true),      # 商店涨价计数，漏了它读档后价格会变便宜
+	}
+	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if file == null:
+		push_warning("[RunState] 存档写入失败: %s" % SAVE_PATH)
+		return false
+	file.store_string(JSON.stringify(data))
+	file.close()
+	print("[RunState] 已自动存档：第 %d 层 金币 %d" % [floor_index, gold])
+	return true
+
+
+## 读回存档并恢复成"进行中的一局"
+func load_run() -> bool:
+	if not has_save():
+		return false
+	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if file == null:
+		return false
+	var text := file.get_as_text()
+	file.close()
+	var parsed = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_warning("[RunState] 存档解析失败，已忽略")
+		return false
+	var data: Dictionary = parsed
+	reset()                                        # 先清干净，再覆盖
+	is_active = true
+	cleared = false
+	floor_index = clampi(int(data.get("floor_index", 1)), 1, MAX_FLOOR)
+	run_seed = int(data.get("run_seed", 0))
+	gold = int(data.get("gold", 0))
+	total_kills = int(data.get("total_kills", 0))
+	run_elapsed = float(data.get("run_elapsed", 0.0))
+	max_health = maxi(int(data.get("max_health", BASE_MAX_HEALTH)), 1)
+	current_health = clampi(int(data.get("current_health", max_health)), 1, max_health)
+	player_damage = maxi(int(data.get("player_damage", 1)), 1)
+	fire_rate_level = maxi(int(data.get("fire_rate_level", 0)), 0)
+	speed_level = maxi(int(data.get("speed_level", 0)), 0)
+	bonus_max_health = int(data.get("bonus_max_health", 0))
+	move_speed_multiplier = float(data.get("move_speed_multiplier", 1.0))
+	fire_rate_multiplier = float(data.get("fire_rate_multiplier", 1.0))
+	bonus_invincibility = float(data.get("bonus_invincibility", 0.0))
+	ally_roster.clear()
+	for entry in data.get("ally_roster", []):
+		if typeof(entry) == TYPE_DICTIONARY:
+			ally_roster.append(entry)
+	shop_bought_this_floor.clear()
+	var bought = data.get("shop_bought_this_floor", {})
+	if typeof(bought) == TYPE_DICTIONARY:
+		shop_bought_this_floor = bought
+	shop_buy_count.clear()
+	var buys = data.get("shop_buy_count", {})
+	if typeof(buys) == TYPE_DICTIONARY:
+		for key in buys.keys():
+			shop_buy_count[String(key)] = int(buys[key])
+	print("[RunState] 已读取存档：第 %d 层 金币 %d 队友 %d" % [floor_index, gold, ally_roster.size()])
+	return true
+
+
+## 删档（通关或失败后调用）
+func delete_save() -> void:
+	if has_save():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+		print("[RunState] 已删除存档")
