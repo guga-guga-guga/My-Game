@@ -338,19 +338,42 @@ func _apply_floor_scaling_to_enemy_configs() -> void:
 
 ## BOSS 血量：基础值见 enemy_boss.tres（150）。
 ## 第 5 层（半路 BOSS）用基础值；第 10 层最终 BOSS 再 ×1.65 更肉（150 -> 248）
-func _boss_config_for_floor() -> EnemyConfig:
-	if not RunState.is_final_floor():
+## BOSS 血量倍率：按 BOSS 层给（用户定的曲线）——第 5 层 ×1、第 10 层 ×2、第 15 层 ×3
+## 普通 BOSS / 紫 BOSS 本体 / 岩浆 BOSS 都吃这张表
+const BOSS_HP_MULT_BY_FLOOR := {5: 1.0, 10: 2.0, 15: 3.0}
+## 岩浆 BOSS 额外的"更肉"系数（在层倍率之上再乘）
+const LAVA_BOSS_HP_BONUS := 1.2
+
+
+## 当前层对应的 BOSS 血量倍率（调试直接开别的层的 BOSS 时，按 5->1、10->2、15->3 线性插值）
+func _boss_hp_multiplier() -> float:
+	var floor_now := _context_floor()
+	if BOSS_HP_MULT_BY_FLOOR.has(floor_now):
+		return float(BOSS_HP_MULT_BY_FLOOR[floor_now])
+	return maxf(1.0, 1.0 + float(floor_now - 5) * 0.2)
+
+
+## 把基础 BOSS 配置按当前层的倍率放大一份（倍率 1 时直接返回原配置）
+func _boss_config_with_mult(mult: float) -> EnemyConfig:
+	if is_equal_approx(mult, 1.0):
 		return BossConfig
 	var copy: EnemyConfig = BossConfig.duplicate()
-	copy.max_health = maxi(int(round(float(BossConfig.max_health) * 1.65)), 1)
-	if debug_print:
-		print("[Battle] 最终 BOSS 血量 %d -> %d" % [BossConfig.max_health, copy.max_health])
+	copy.max_health = maxi(int(round(float(BossConfig.max_health) * mult)), 1)
 	return copy
 
 
-## 紫 BOSS 血量：统一用基础值（用户要求"紫色也一起改"），不乘最终层倍率
+func _boss_config_for_floor() -> EnemyConfig:
+	var mult := _boss_hp_multiplier()
+	var cfg := _boss_config_with_mult(mult)
+	if debug_print and not is_equal_approx(mult, 1.0):
+		print("[Battle] 第 %d 层 BOSS 血量 %d -> %d（×%.2f）" % [
+			_context_floor(), BossConfig.max_health, cfg.max_health, mult])
+	return cfg
+
+
+## 紫 BOSS 血量：和普通 BOSS 吃同一张表；家族血池 = 每只本体各贡献一份
 func _boss_config_for_purple() -> EnemyConfig:
-	return BossConfig
+	return _boss_config_with_mult(_boss_hp_multiplier())
 
 
 ## 整局生命值变化时（例如商店买血）同步到玩家节点
@@ -3729,7 +3752,8 @@ func _spawn_lava_boss(index: int) -> void:
 	var spawn_cell := _next_boss_spawn_cell()
 	boss.global_position = cell_to_world(spawn_cell)
 	var config: EnemyConfig = BossConfig.duplicate()
-	config.max_health = maxi(int(round(float(BossConfig.max_health) * 1.2)), 1)
+	config.max_health = maxi(int(round(
+		float(BossConfig.max_health) * LAVA_BOSS_HP_BONUS * _boss_hp_multiplier())), 1)
 	boss.setup(config, player)
 	if boss.has_method("set_arena"):
 		boss.set_arena(arena_data["grid"], int(arena_data["width"]), int(arena_data["height"]))
