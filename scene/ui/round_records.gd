@@ -1,7 +1,7 @@
 extends RefCounted
 class_name RoundRecords
 
-## 单局战绩读写工具:只提供“读全部”和“追加一条”，供开始界面和主场景共用
+## 单局战绩读写工具:只提供“读全部”和“追加一条”（标题界面已不显示列表，这里只负责记录）
 ## 存档是纯文本 JSON，位置在 user://round_records.json
 ## Windows 下实际路径:%APPDATA%\Godot\app_userdata\唯时代尔\round_records.json
 

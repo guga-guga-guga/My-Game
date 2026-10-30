@@ -248,7 +248,7 @@ func _get_round_elapsed_time() -> float:
 	return clampf(stage_duration - stage_time_left, 0.0, maxf(stage_duration, 0.0))
 
 
-#结算时把本局战绩写进存档，开始界面会读取它并显示最近 10 局
+#结算时把本局战绩写进存档（开始界面已不再显示战绩列表，数据留着备将来做统计页）
 func _record_round_result(won: bool) -> void:
 	RoundRecords.add_record(_get_round_elapsed_time(), round_kill_count, won)
 

@@ -17,9 +17,7 @@ const FONT_SIZE_SUBTITLE := 18
 const FONT_SIZE_BODY := 16
 const FONT_SIZE_SMALL := 14
 
-## 右侧战绩面板（用户要求）+ 底部按钮排的边距
-const RECORDS_PANEL_WIDTH := 420.0
-const RECORDS_PANEL_MARGIN := 24.0
+## 底部按钮排的边距
 const TITLE_BUTTON_BOTTOM_MARGIN := 36.0
 
 #标题字体留 null 就用 Godot 默认字体 结算弹窗用的也是它，能显示中文 
@@ -27,7 +25,6 @@ const TITLE_BUTTON_BOTTOM_MARGIN := 36.0
 #const CUSTOM_FONT: Font = preload("res://resources/font/IPix.ttf")
 const CUSTOM_FONT: Font = null
 
-var _records_panel: PanelContainer = null
 var _button_bar: VBoxContainer = null
 ## 标题页按钮列表：支持 W/S 上下选择 + E 确认（用户要求）
 var _buttons: Array[Button] = []
@@ -58,15 +55,10 @@ func _ready() -> void:
 	_build_ui()
 
 
-#代码生成整个界面:一个纵向容器装下所有内容，整体垂直居中
-#代码生成整个界面（用户定的排版）:
-#   中部     标题 + 操作说明
-#   中间下方  一整排按钮
-#   右侧     最近战绩
 #代码生成整个界面（用户定的排版）:
 #   中部      标题 + 操作说明
-#   中间下方   原来的按钮竖排，整组下移（用户要求：保持原排列，只下移）
-#   右侧靠下   最近战绩（半透明底，不带边框）
+#   中间下方   原来的按钮竖排，整组下移（保持原排列，只下移）
+#   （右侧的「最近 10 局战绩」面板已按用户要求删除）
 func _build_ui() -> void:
 	_add_background()
 
@@ -111,9 +103,6 @@ func _build_ui() -> void:
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
 	_button_bar.add_child(quit_button)
-
-	# ---- 右侧靠下:最近战绩 ----
-	_build_records_panel()
 
 	# 收集按钮，供 W/S + E 的键盘操作使用
 	_buttons.clear()
@@ -162,38 +151,11 @@ func _activate_focused_button() -> void:
 
 
 
-#右侧战绩面板（用户要求：战绩放在界面右侧）
-func _build_records_panel() -> void:
-	_records_panel = PanelContainer.new()
-	_records_panel.name = "RecordsPanel"
-	_records_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	_records_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_records_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN     # 内容多了往上长
-	_records_panel.offset_left = -RECORDS_PANEL_WIDTH
-	_records_panel.offset_right = -RECORDS_PANEL_MARGIN
-	_records_panel.offset_top = -RECORDS_PANEL_MARGIN
-	_records_panel.offset_bottom = -RECORDS_PANEL_MARGIN
-	add_child(_records_panel)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.28)                     # 只要半透明底，不要金边（用户要求更透）
-	style.set_corner_radius_all(4)
-	style.set_content_margin_all(12)
-	_records_panel.add_theme_stylebox_override("panel", style)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
-	_records_panel.add_child(box)
-	box.add_child(_make_label("最近 10 局战绩", FONT_SIZE_SUBTITLE, COLOR_TITLE))
-	box.add_child(_make_label(_build_records_text(), FONT_SIZE_SMALL, COLOR_HINT,
-		HORIZONTAL_ALIGNMENT_LEFT))
-
-
-#自检:战绩面板是否在右半屏、按钮排是否在底部中间（headless 也能验）
+#自检:按钮排是否在底部居中（headless 也能验）
 func _check_title_layout() -> void:
-	if _records_panel == null or _button_bar == null:
+	if _button_bar == null:
 		return
 	var screen := Vector2(get_viewport().get_visible_rect().size)
-	var panel := _records_panel.get_global_rect()
 	# 按钮组：横向上取"第一个按钮左边缘 ~ 最后一个按钮右边缘"，纵向取整组范围
 	var group_top := INF
 	var group_bottom := -INF
@@ -208,19 +170,10 @@ func _check_title_layout() -> void:
 		group_right = maxf(group_right, rect.end.x)
 		group_top = minf(group_top, rect.position.y)
 		group_bottom = maxf(group_bottom, rect.end.y)
-	print("[Title自检] 样例 闯关: %s" % _format_record_line({"mode": "run", "floor": 10, "gold": 123}, 1))
-	print("[Title自检] 样例 经典: %s" % _format_record_line({"mode": "classic", "elapsed": 68.0, "kills": 60}, 10))
-	var real_text := _build_records_text().split("
-")
-	if real_text.size() > 0:
-		print("[Title自检] 真实存档首行: %s" % real_text[0])
-		print("[Title自检] 真实存档末行: %s（共 %d 行）" % [real_text[-1], real_text.size()])
-	print("[Title自检] 屏幕 %dx%d | 战绩面板 位置%s 尺寸%dx%d 右边距%d 下边距%d | 按钮组 x %d~%d(中心%d 屏幕中心%d) y %d~%d 距底%d" % [
-		int(screen.x), int(screen.y), str(panel.position), int(panel.size.x), int(panel.size.y),
-		int(screen.x - panel.end.x), int(screen.y - panel.end.y),
+	print("[Title自检] 屏幕 %dx%d | 按钮组 x %d~%d(中心%d 屏幕中心%d) y %d~%d 距底%d" % [
+		int(screen.x), int(screen.y),
 		int(group_left), int(group_right), int((group_left + group_right) * 0.5), int(screen.x * 0.5),
 		int(group_top), int(group_bottom), int(screen.y - group_bottom)])
-
 
 
 #背景分三层:纯色底 到 开场图 到 半透明遮罩 遮罩保证背景很花时文字依然看得清 
@@ -253,55 +206,6 @@ func _add_background() -> void:
 	scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(scrim)
-
-
-#把最近 10 局战绩拼成多行文本；没有记录时给一句提示
-func _build_records_text() -> String:
-	var data := RoundRecords.load_data()
-	var saved_records: Array = data.get("records", [])
-	if saved_records.is_empty():
-		return "还没有战绩，先来一局吧"
-	
-	var lines: Array[String] = []
-	for record in saved_records:
-		if typeof(record) != TYPE_DICTIONARY:
-			continue
-		var record_data: Dictionary = record
-		# 局数按列表位置固定为 1..10（从上往下），不用存档里那个一直累加的绝对局号
-		lines.append(_format_record_line(record_data, lines.size() + 1))
-	
-	if lines.is_empty():
-		return "还没有战绩，先来一局吧"
-	
-	#String.join 只接受 PackedStringArray，这里手动拼，避免类型转换出问题
-	var text := ""
-	for line in lines:
-		if not text.is_empty():
-			text += "\n"
-		text += line
-	return text
-
-
-#一行的显示格式（用户要求）:
-#   行首只显示序号 1~10（不要"第 N 局"字样）
-#   闯关模式 -> 到了多少层 + 金币数量
-#   经典模式 -> 坚持了多久 + 击杀了多少
-#老存档没有 mode 字段，就用 floor>0 推断（那时候只有经典模式）
-func _format_record_line(record_data: Dictionary, row_number: int = 1) -> String:
-	var mode := String(record_data.get("mode", ""))
-	if mode.is_empty():
-		mode = "run" if int(record_data.get("floor", 0)) > 0 else "classic"
-	# %2d: 1~9 前面补一个空格，跟 "10" 对齐
-	if mode == "run":
-		return "%2d  闯关模式  到达第 %d 层  金币 %d" % [
-			row_number, maxi(int(record_data.get("floor", 0)), 1), int(record_data.get("gold", 0))]
-	return "%2d  经典模式  坚持 %s 秒  击杀 %d" % [
-		row_number, _format_seconds(float(record_data.get("elapsed", 0.0))), int(record_data.get("kills", 0))]
-
-
-
-func _format_seconds(seconds: float) -> String:
-	return "%.1f" % maxf(seconds, 0.0)
 
 
 func _make_label(
