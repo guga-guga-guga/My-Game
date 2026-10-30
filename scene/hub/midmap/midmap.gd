@@ -116,8 +116,9 @@ func _spawn_npcs() -> void:
 	var kinds: Array[String] = RunState.midmap_kinds()
 	if RunState.is_boss_floor():
 		print("[MidMap] BOSS 层（第 %d 层）：左右商店 中间 BOSS" % RunState.floor_index)
-	# 用户指定：敌人素材取 源石虫.png 的**第 1 横排**与**第 3 横排**（每排 3 帧，32x32）
-	var battle_frames: SpriteFrames = _frames_from_row(0)
+	# 用户指定：普通关用 源石虫.png 的**第 2 横排**（黄黑配色，3 帧 32x32），
+	# 精英关用**第 3 横排**（紫），都是原图直接切帧、6 帧/秒循环、不染色不放大
+	var battle_frames: SpriteFrames = _frames_from_row(32)
 	var elite_frames: SpriteFrames = _frames_from_row(64)
 	var player_frames: SpriteFrames = _player_frames()
 	var guard_frames: SpriteFrames = _frames_from_w_row(128, 4)
