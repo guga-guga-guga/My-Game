@@ -30,6 +30,7 @@ var _expansion_box: VBoxContainer = null
 var _resolution_label: Label = null
 var _volume_label: Label = null
 var _shoot_labels: Array[Label] = []
+var _shoot_title: Label = null
 var _selected := 0
 var _expanded := false
 var _expand_selected := 0
@@ -104,27 +105,48 @@ func _build_ui() -> void:
 	_resolution_label = _make_label(resolution_row, "", FONT_ROW, COLOR_TEXT)
 	_resolution_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	_resolution_label.gui_input.connect(_on_resolution_clicked)
+	_resolution_label.mouse_entered.connect(func() -> void: _hover_row(0))
+	var resolution_title := resolution_row.get_child(0) as Label
+	if resolution_title != null:
+		resolution_title.mouse_filter = Control.MOUSE_FILTER_STOP
+		resolution_title.mouse_entered.connect(func() -> void: _hover_row(0))
 	_expansion_box = VBoxContainer.new()
 	_expansion_box.add_theme_constant_override("separation", 4)
 	box.add_child(_expansion_box)
 
 	# ② 背景音量
 	var volume_row := _make_row(box, "背景音量")
-	_make_click_label(volume_row, "-", func() -> void: _change_volume(-GameSettings.VOLUME_STEP))
+	var minus := _make_click_label(volume_row, "-",
+		func() -> void: _change_volume(-GameSettings.VOLUME_STEP))
+	minus.mouse_entered.connect(func() -> void: _hover_row(1))
 	_volume_label = _make_label(volume_row, "", FONT_ROW, COLOR_TEXT)
-	_make_click_label(volume_row, "+", func() -> void: _change_volume(GameSettings.VOLUME_STEP))
+	_volume_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	_volume_label.mouse_entered.connect(func() -> void: _hover_row(1))
+	var plus := _make_click_label(volume_row, "+", func() -> void: _change_volume(GameSettings.VOLUME_STEP))
+	plus.mouse_entered.connect(func() -> void: _hover_row(1))
+	var volume_title := volume_row.get_child(0) as Label
+	if volume_title != null:
+		volume_title.mouse_filter = Control.MOUSE_FILTER_STOP
+		volume_title.mouse_entered.connect(func() -> void: _hover_row(1))
 
 	# ③ 射击操作（两个选项，点谁选谁）
 	var shoot_row := _make_row(box, "射击操作")
+	_shoot_title = shoot_row.get_child(0) as Label
+	if _shoot_title != null:
+		_shoot_title.mouse_filter = Control.MOUSE_FILTER_STOP
+		_shoot_title.mouse_entered.connect(func() -> void: _hover_row(2))
 	for index in range(SHOOT_MODE_TEXTS.size()):
 		var label := _make_click_label(shoot_row, SHOOT_MODE_TEXTS[index],
 			func() -> void: _choose_shoot_mode(index))
+		label.mouse_entered.connect(func() -> void: _hover_row(2))
 		_shoot_labels.append(label)
 
 	# ④ 关闭
 	var close_row := _make_row(box, "")
 	var close_label := _make_click_label(close_row, "关闭", func() -> void: _close())
 	close_label.add_theme_color_override("font_color", COLOR_TEXT)
+	close_label.mouse_entered.connect(func() -> void: _hover_row(3))
+	close_label.mouse_exited.connect(func() -> void: _refresh())
 
 	_make_label(box, "W/S 选行    A/D 改值    E 展开或确认    ESC 关闭", FONT_HINT, COLOR_HINT)
 
@@ -167,11 +189,14 @@ func _refresh() -> void:
 	_volume_label.text = "%d%%" % GameSettings.volume_percent
 	_volume_label.add_theme_color_override("font_color",
 		COLOR_SELECTED if _selected == 1 else COLOR_TEXT)
+	# 射击操作：用方框 [xxx] 表示"当前选择的模式"，文字本身不再变黄（避免和行高亮重复）
+	if _shoot_title != null:
+		_shoot_title.add_theme_color_override("font_color",
+			COLOR_SELECTED if _selected == 2 else COLOR_HINT)
 	for index in range(_shoot_labels.size()):
 		var chosen: bool = GameSettings.is_mouse_shoot() == (index == 1)
-		var color := COLOR_SELECTED if (chosen or _selected == 2) else COLOR_TEXT
-		_shoot_labels[index].text = ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else SHOOT_MODE_TEXTS[index]
-		_shoot_labels[index].add_theme_color_override("font_color", color)
+		_shoot_labels[index].text = ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else (" %s " % SHOOT_MODE_TEXTS[index])
+		_shoot_labels[index].add_theme_color_override("font_color", COLOR_TEXT)
 	_rebuild_expansion()
 
 
@@ -186,6 +211,7 @@ func _rebuild_expansion() -> void:
 		var label := _make_click_label(_expansion_box,
 			("* " if index == _expand_selected else "  ") + options[index],
 			func() -> void: _choose_expansion(index))
+		label.mouse_entered.connect(func() -> void: _hover_expansion(index))
 		label.add_theme_color_override("font_color",
 			COLOR_SELECTED if index == _expand_selected else COLOR_TEXT)
 
@@ -208,6 +234,24 @@ func _choose_expansion(index: int) -> void:
 	else:
 		GameSettings.set_fullscreen(not GameSettings.fullscreen)
 	_expanded = false
+	_refresh()
+
+
+## 鼠标移到哪一行，就把"当前选中行"挪过去（这样黄框也会跟着鼠标走）
+func _hover_row(row: int) -> void:
+	if _expanded and row == 0:
+		return                                    # 展开列表时，悬停第一行不收起也不换行
+	if _selected == row:
+		return
+	_selected = row
+	_refresh()
+
+
+## 展开列表里：鼠标悬停哪一项就选哪一项
+func _hover_expansion(index: int) -> void:
+	if not _expanded or _expand_selected == index:
+		return
+	_expand_selected = index
 	_refresh()
 
 
