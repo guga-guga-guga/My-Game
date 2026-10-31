@@ -54,6 +54,7 @@ var spiral_phase: float =0.0
 #玩家当前生命，由最大生命值初始化
 var current_health: int = 0
 var _aim_cursor: Sprite2D = null      ## 鼠标射击模式下的准星 sprite
+var _aim_cursor_active := false       ## 只有战斗界面才打开准星（菜单/中间地图用系统指针）
 #无敌剩余时间， > 0 忽略受伤请求
 var invincibility_time_left: float = 0.0
 #玩家死亡后停止移动和射击
@@ -65,9 +66,9 @@ var is_dead: bool = false
 @export var bullet_spawn_distance: float = 18.0
 
 func _ready() -> void:
-	# 鼠标射击模式：藏掉系统指针，自己画一个半像素块的准星；键盘模式用系统指针
-	GameSettings.apply_cursor(GameSettings.is_mouse_shoot())
+	# 准星默认不激活（中间地图、暂停菜单都用系统指针），由战斗场景调 set_aim_cursor_active()
 	_refresh_aim_cursor()
+	set_aim_cursor_active(false)
 	if not GameSettings.changed.is_connected(_refresh_aim_cursor):
 		GameSettings.changed.connect(_refresh_aim_cursor)
 	current_health = max(max_health, 1)
@@ -87,25 +88,56 @@ func _exit_tree() -> void:
 		_aim_cursor = null
 
 
+## 战斗界面才用它：true = 藏系统指针 + 显示倒三角准星；false = 恢复系统指针
+func set_aim_cursor_active(active: bool) -> void:
+	var want := active and GameSettings.is_mouse_shoot()
+	if want == _aim_cursor_active:
+		return
+	_aim_cursor_active = want
+	if want:
+		_create_aim_cursor()
+	if _aim_cursor != null and is_instance_valid(_aim_cursor):
+		_aim_cursor.visible = want
+	GameSettings.apply_cursor(want)
+
+
+func is_aim_cursor_active() -> bool:
+	return _aim_cursor_active
+
+
+## 自检用：拿到准星 sprite 本体
+func debug_aim_cursor() -> Node:
+	return _aim_cursor
+
+
+## 建准星 sprite（只建一次）
+func _create_aim_cursor() -> void:
+	if _aim_cursor != null and is_instance_valid(_aim_cursor):
+		return
+	_aim_cursor = Sprite2D.new()
+	_aim_cursor.name = "AimCursor"
+	_aim_cursor.texture = GameSettings.aim_cursor_texture()
+	_aim_cursor.centered = false
+	_aim_cursor.offset = Vector2(-1.0, -1.0)          # 让三角尖对准鼠标点
+	_aim_cursor.scale = Vector2(GameSettings.CURSOR_BLOCK_SCALE, GameSettings.CURSOR_BLOCK_SCALE)
+	_aim_cursor.z_as_relative = false
+	_aim_cursor.z_index = 150
+	_aim_cursor.top_level = true
+	_aim_cursor.visible = false
+	add_child(_aim_cursor)
+
+
 ## 准星就是 3x2 的倒三角贴图，按 0.5 缩放 → 一个色块 = 角色像素块的一半
 func _refresh_aim_cursor() -> void:
-	var want := GameSettings.is_mouse_shoot()
+	var want := GameSettings.is_mouse_shoot() and _aim_cursor_active
 	GameSettings.apply_cursor(want)
-	if want:
-		if _aim_cursor == null or not is_instance_valid(_aim_cursor):
-			_aim_cursor = Sprite2D.new()
-			_aim_cursor.name = "AimCursor"
-			_aim_cursor.texture = GameSettings.aim_cursor_texture()
-			_aim_cursor.centered = false
-			_aim_cursor.offset = Vector2(-1.0, -1.0)      # 让三角尖对准鼠标点
-			_aim_cursor.scale = Vector2(GameSettings.CURSOR_BLOCK_SCALE, GameSettings.CURSOR_BLOCK_SCALE)
-			_aim_cursor.z_as_relative = false
-			_aim_cursor.z_index = 150
-			_aim_cursor.top_level = true
-			add_child(_aim_cursor)
-		_aim_cursor.visible = true
-	elif _aim_cursor != null and is_instance_valid(_aim_cursor):
-		_aim_cursor.visible = false
+	if GameSettings.is_mouse_shoot():
+		_create_aim_cursor()                          # 鼠标模式：把 sprite 建好
+		_aim_cursor.visible = _aim_cursor_active
+	else:
+		_aim_cursor_active = false
+		if _aim_cursor != null and is_instance_valid(_aim_cursor):
+			_aim_cursor.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -142,7 +174,7 @@ func _physics_process(delta: float) -> void:
 		_try_shoot(shoot_input)
 
 	_update_facing(move_input, mouse_aim if mouse_shoot else shoot_input)
-	if mouse_shoot and _aim_cursor != null and is_instance_valid(_aim_cursor):
+	if mouse_shoot and _aim_cursor_active and _aim_cursor != null and is_instance_valid(_aim_cursor):
 		_aim_cursor.global_position = get_global_mouse_position()
 	_update_animation()
 	_update_armed_effect()

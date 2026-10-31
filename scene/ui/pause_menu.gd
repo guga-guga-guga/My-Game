@@ -4,6 +4,7 @@ extends CanvasLayer
 ## 操作：W/S 或上下键选择，E 或回车确认，ESC 直接继续游戏；鼠标点击选项也能用。
 ## 只有在"没有别的界面打开"时才会被叫出来（商店/对话/汇报的 ESC 优先关它们自己）。
 
+signal opened
 signal closed
 signal quit_to_title_requested
 
@@ -94,6 +95,7 @@ func open() -> void:
 	visible = true
 	_refresh()
 	get_tree().paused = true                 # 暂停整局：倒计时也停
+	opened.emit()
 	print("[Pause] 暂停菜单打开（游戏已暂停）")
 
 

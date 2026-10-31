@@ -719,6 +719,7 @@ func _process(delta: float) -> void:
 	if not _maze_exit_cells.is_empty():
 		_update_maze(delta)
 	_update_temp_lava(delta)
+	_update_aim_cursor()
 	if goal.get("type", "") == LevelGoal.TYPE_BOSS:
 		_separate_bosses(delta)
 	if goal.get("type", "") == LevelGoal.TYPE_BOSS and _context_floor() == RunState.MAX_FLOOR:
@@ -1528,6 +1529,8 @@ func _build_run_summary() -> String:
 
 ## 覆盖父类: 多行文本时把弹窗放大，避免被裁掉
 func _show_result_dialog(result_title: String, result_message: String) -> void:
+	if player != null and is_instance_valid(player) and player.has_method("set_aim_cursor_active"):
+		player.set_aim_cursor_active(false)          # 结算界面用系统指针
 	# 显示结算前，先把队友血量/层数写回名册（只写一次）
 	if not is_result_displayed:
 		_write_back_allies()
@@ -3206,6 +3209,16 @@ func _set_build_mode(enabled: bool) -> void:
 			_build_frame.visible = false
 	if debug_print:
 		print("[Battle] 建造模式 %s" % ("开启" if enabled else "关闭"))
+
+
+## 鼠标准星只在战斗画面上出现：暂停、结算、任何 UI 打开时都恢复系统指针
+func _update_aim_cursor() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	if not player.has_method("set_aim_cursor_active"):
+		return
+	var active := GameSettings.is_mouse_shoot() and not get_tree().paused and not is_result_displayed
+	player.set_aim_cursor_active(active)
 
 
 func _update_defend_build(delta: float) -> void:

@@ -486,6 +486,23 @@ func _setup_pause_menu() -> void:
 	# 按 Win / Alt+Tab 让窗口失焦：自动弹暂停菜单（倒计时也一起停）
 	if not GameSettings.window_focus_lost.is_connected(_on_window_focus_lost):
 		GameSettings.window_focus_lost.connect(_on_window_focus_lost)
+	# 暂停/继续时切换鼠标准星（暂停期间 _process 停了，必须靠信号）
+	if not _pause_menu.opened.is_connected(_on_pause_menu_opened):
+		_pause_menu.opened.connect(_on_pause_menu_opened)
+	if not _pause_menu.closed.is_connected(_on_pause_menu_closed):
+		_pause_menu.closed.connect(_on_pause_menu_closed)
+
+
+## 暂停菜单打开：暂停界面一律用系统指针
+func _on_pause_menu_opened() -> void:
+	if player != null and is_instance_valid(player) and player.has_method("set_aim_cursor_active"):
+		player.set_aim_cursor_active(false)
+
+
+## 暂停菜单关闭：回到战斗再决定要不要开准星
+func _on_pause_menu_closed() -> void:
+	if has_method("_update_aim_cursor"):
+		call("_update_aim_cursor")
 
 
 ## 窗口失焦（按 Win 键 / Alt+Tab）-> 直接暂停
