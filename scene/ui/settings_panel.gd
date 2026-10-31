@@ -196,7 +196,7 @@ func _resolution_options() -> Array[String]:
 	for index in range(GameSettings.RESOLUTIONS.size()):
 		var suffix := "（当前）" if index == GameSettings.resolution_index and not GameSettings.fullscreen else ""
 		options.append(GameSettings.resolution_text(index) + suffix)
-	options.append(FULLSCREEN_OPTION_TEXT + ("（已开启）" if GameSettings.fullscreen else "（关闭）"))
+	options.append(FULLSCREEN_OPTION_TEXT)                     # 就写"全屏"，不带括号注释
 	return options
 
 

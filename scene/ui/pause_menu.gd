@@ -1,5 +1,5 @@
 extends CanvasLayer
-## 暂停菜单（ESC）：继续游戏 / 回到主界面
+## 暂停菜单（ESC）：继续游戏 / 设置 / 回到主界面
 ## 打开时暂停整棵场景树（战斗倒计时/时间条都停住），菜单自己 PROCESS_MODE_ALWAYS 继续响应。
 ## 操作：W/S 或上下键选择，E 或回车确认，ESC 直接继续游戏；鼠标点击选项也能用。
 ## 只有在"没有别的界面打开"时才会被叫出来（商店/对话/汇报的 ESC 优先关它们自己）。
@@ -10,7 +10,11 @@ signal quit_to_title_requested
 const FONT_TITLE := 40
 const FONT_BODY := 28
 const FONT_HINT := 20
-const OPTIONS: Array[String] = ["继续游戏", "回到主界面"]
+const SettingsPanelScript = preload("res://scene/ui/settings_panel.gd")
+const OPTIONS: Array[String] = ["继续游戏", "设置", "回到主界面"]
+const OPTION_CONTINUE := 0
+const OPTION_SETTINGS := 1
+const OPTION_QUIT := 2
 
 var _rows: Array[Label] = []
 var _selected := 0
@@ -18,6 +22,7 @@ var _open := false
 var _open_frame := -1
 var _close_frame := -1
 var _close_msec := -10000
+var _settings_panel = null
 
 
 func is_open() -> bool:
@@ -116,7 +121,28 @@ func _close(quit_to_title: bool) -> void:
 
 func _confirm() -> void:
 	SfxPlayer.ui_click()
-	_close(_selected == 1)
+	if _selected == OPTION_SETTINGS:
+		_open_settings()
+		return
+	_close(_selected == OPTION_QUIT)
+
+
+## 暂停菜单里的「设置」：面板自己 PROCESS_MODE_ALWAYS，暂停状态下也能操作
+func _open_settings() -> void:
+	if _settings_panel == null:
+		_settings_panel = SettingsPanelScript.new()
+		add_child(_settings_panel)
+	_settings_panel.open()
+
+
+## 自检用
+func debug_open_settings() -> void:
+	_selected = OPTION_SETTINGS
+	_confirm()
+
+
+func debug_settings_panel() -> Node:
+	return _settings_panel
 
 
 func _move(step: int) -> void:

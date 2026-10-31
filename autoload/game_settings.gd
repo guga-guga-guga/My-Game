@@ -102,12 +102,27 @@ func set_shoot_mode(mode: String) -> void:
 	changed.emit()
 
 
-## 鼠标射击换成自定义准星；键盘射击恢复系统指针
+## 一个准星色块 = 角色一个像素块的一半（0.5 个美术像素）
+## 系统鼠标光标的最小单位是 1 像素、画不出半像素，所以鼠标射击模式下
+## 直接藏掉系统指针，由玩家节点挂一个 0.5 缩放的 3x2 sprite 当准星（见 player.gd）
+const CURSOR_BLOCK_SCALE := 0.5
+
+var _aim_cursor_texture: Texture2D = null
+
+
+func aim_cursor_texture() -> Texture2D:
+	if _aim_cursor_texture == null:
+		_aim_cursor_texture = _make_aim_cursor()
+	return _aim_cursor_texture
+
+
+## 鼠标射击：藏掉系统指针（准星由玩家节点自己画）；键盘射击：恢复系统指针
 func apply_cursor(want_custom: bool) -> void:
-	if not want_custom:
-		Input.set_custom_mouse_cursor(null)
-		return
-	Input.set_custom_mouse_cursor(_make_aim_cursor(), Input.CURSOR_ARROW, Vector2(1, 1))
+	Input.set_custom_mouse_cursor(null)
+	if want_custom:
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+	else:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
 ## 准星就是 3x2 像素的倒三角，像素块之间不留空隙：
@@ -135,19 +150,30 @@ func apply_window() -> void:
 	var size := resolution()
 	if fullscreen:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-	else:
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-		DisplayServer.window_set_size(size)
-		_center_window()
-	DisplayServer.window_set_size(size)           # 全屏时也要把渲染尺寸设对
+		DisplayServer.window_set_size(size)       # 全屏时把渲染尺寸设成选定分辨率
+		return
+	# 窗口化：窗口 + 标题栏 必须放得进"可用区域"（去掉任务栏），
+	# 否则 1920x1080 这种等于屏幕大小的窗口会把标题栏顶到屏幕外，看着就像全屏了
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	var usable := DisplayServer.screen_get_usable_rect()
+	var decoration := _window_decoration_size()
+	var fit := Vector2i(
+		mini(size.x, maxi(usable.size.x - decoration.x, 320)),
+		mini(size.y, maxi(usable.size.y - decoration.y, 240)))
+	DisplayServer.window_set_size(fit)
+	DisplayServer.window_set_position(Vector2i(
+		usable.position.x + maxi((usable.size.x - (fit.x + decoration.x)) / 2, 0),
+		usable.position.y + maxi((usable.size.y - (fit.y + decoration.y)) / 2, 0)))
 
 
-func _center_window() -> void:
-	var screen := DisplayServer.screen_get_size()
-	var window_size := DisplayServer.window_get_size()
-	if screen.x > 0 and screen.y > 0:
-		DisplayServer.window_set_position(Vector2i(
-			maxi((screen.x - window_size.x) / 2, 0), maxi((screen.y - window_size.y) / 2, 0)))
+## 窗口边框（标题栏）占多少像素：用"含装饰尺寸 - 内容尺寸"算出来
+func _window_decoration_size() -> Vector2i:
+	var window := get_window()
+	if window == null:
+		return Vector2i.ZERO
+	var with_deco := window.get_size_with_decorations()
+	var content := window.size
+	return Vector2i(maxi(with_deco.x - content.x, 0), maxi(with_deco.y - content.y, 0))
 
 
 func apply_volume() -> void:

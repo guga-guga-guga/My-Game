@@ -53,6 +53,7 @@ var spiral_phase: float =0.0
 
 #玩家当前生命，由最大生命值初始化
 var current_health: int = 0
+var _aim_cursor: Sprite2D = null      ## 鼠标射击模式下的准星 sprite
 #无敌剩余时间， > 0 忽略受伤请求
 var invincibility_time_left: float = 0.0
 #玩家死亡后停止移动和射击
@@ -64,8 +65,11 @@ var is_dead: bool = false
 @export var bullet_spawn_distance: float = 18.0
 
 func _ready() -> void:
-	# 鼠标射击模式下换成 3x2 像素的自定义准星（键盘模式用系统指针）
+	# 鼠标射击模式：藏掉系统指针，自己画一个半像素块的准星；键盘模式用系统指针
 	GameSettings.apply_cursor(GameSettings.is_mouse_shoot())
+	_refresh_aim_cursor()
+	if not GameSettings.changed.is_connected(_refresh_aim_cursor):
+		GameSettings.changed.connect(_refresh_aim_cursor)
 	current_health = max(max_health, 1)
 	shooting_timer.one_shot = true
 	shooting_timer.wait_time = _get_effective_fire_interval()
@@ -76,6 +80,32 @@ func _ready() -> void:
 	
 func _exit_tree() -> void:
 	GameSettings.apply_cursor(false)          # 离开战斗还原系统指针
+	if GameSettings.changed.is_connected(_refresh_aim_cursor):
+		GameSettings.changed.disconnect(_refresh_aim_cursor)
+	if _aim_cursor != null and is_instance_valid(_aim_cursor):
+		_aim_cursor.queue_free()
+		_aim_cursor = null
+
+
+## 准星就是 3x2 的倒三角贴图，按 0.5 缩放 → 一个色块 = 角色像素块的一半
+func _refresh_aim_cursor() -> void:
+	var want := GameSettings.is_mouse_shoot()
+	GameSettings.apply_cursor(want)
+	if want:
+		if _aim_cursor == null or not is_instance_valid(_aim_cursor):
+			_aim_cursor = Sprite2D.new()
+			_aim_cursor.name = "AimCursor"
+			_aim_cursor.texture = GameSettings.aim_cursor_texture()
+			_aim_cursor.centered = false
+			_aim_cursor.offset = Vector2(-1.0, -1.0)      # 让三角尖对准鼠标点
+			_aim_cursor.scale = Vector2(GameSettings.CURSOR_BLOCK_SCALE, GameSettings.CURSOR_BLOCK_SCALE)
+			_aim_cursor.z_as_relative = false
+			_aim_cursor.z_index = 150
+			_aim_cursor.top_level = true
+			add_child(_aim_cursor)
+		_aim_cursor.visible = true
+	elif _aim_cursor != null and is_instance_valid(_aim_cursor):
+		_aim_cursor.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -112,6 +142,8 @@ func _physics_process(delta: float) -> void:
 		_try_shoot(shoot_input)
 
 	_update_facing(move_input, mouse_aim if mouse_shoot else shoot_input)
+	if mouse_shoot and _aim_cursor != null and is_instance_valid(_aim_cursor):
+		_aim_cursor.global_position = get_global_mouse_position()
 	_update_animation()
 	_update_armed_effect()
 	
