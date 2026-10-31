@@ -4,6 +4,7 @@ extends Control
 ## 这样不用手写复杂的场景文件，但代价是改版式要动代码
 
 const GAME_SCENE_PATH := "res://scene/levels/classic/game.tscn"
+const SettingsPanelScript = preload("res://scene/ui/settings_panel.gd")
 
 #配色:背景沿用主场景的深灰，两屏观感保持一致
 const COLOR_BACKGROUND := Color(0.0588, 0.0588, 0.0588)
@@ -28,6 +29,7 @@ const CUSTOM_FONT: Font = null
 var _button_bar: VBoxContainer = null
 ## 标题页按钮列表：支持 W/S 上下选择 + E 确认（用户要求）
 var _buttons: Array[Button] = []
+var _settings_panel = null
 
 const TITLE_TEXT := "唯时代尔"
 ## 标题下面的说明：只留操作说明（"撑满倒计时即通关…"那句按用户要求去掉了）
@@ -96,9 +98,9 @@ func _build_ui() -> void:
 		continue_button.pressed.connect(_on_continue_run_button_pressed)
 		_button_bar.add_child(continue_button)
 
-	var start_button := _make_button("经典模式", "StartButton")
-	start_button.pressed.connect(_on_start_button_pressed)
-	_button_bar.add_child(start_button)
+	var settings_button := _make_button("设置", "SettingsButton")
+	settings_button.pressed.connect(_on_settings_button_pressed)
+	_button_bar.add_child(settings_button)
 
 	var quit_button := _make_button("退出游戏", "QuitButton")
 	quit_button.pressed.connect(_on_quit_button_pressed)
@@ -257,6 +259,15 @@ func _on_continue_run_button_pressed() -> void:
 	if not RunState.load_run():
 		return
 	GameFlow.goto_midmap()
+
+
+## 「设置」：打开设置面板（分辨率 / 背景音量 / 射击操作）
+func _on_settings_button_pressed() -> void:
+	SfxPlayer.ui_click()
+	if _settings_panel == null:
+		_settings_panel = SettingsPanelScript.new()
+		add_child(_settings_panel)
+	_settings_panel.open()
 
 
 func _on_start_run_button_pressed() -> void:

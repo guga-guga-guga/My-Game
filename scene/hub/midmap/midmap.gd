@@ -477,6 +477,8 @@ func _auto_pause_on_focus_lost() -> void:
 func _setup_pause_menu() -> void:
 	_pause_menu = PauseMenuScript.new()
 	add_child(_pause_menu)
+	if not GameSettings.window_focus_lost.is_connected(_on_window_focus_lost):
+		GameSettings.window_focus_lost.connect(_on_window_focus_lost)
 	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
 
 
@@ -484,6 +486,13 @@ func _on_quit_to_title_requested() -> void:
 	# 用户选"回到主界面"：直接放弃这一局，不写战绩
 	print("[MidMap] 回到主界面（放弃本局，不留战绩）")
 	GameFlow.goto_title()
+
+
+## 窗口失焦（按 Win 键 / Alt+Tab）-> 自动弹暂停菜单
+func _on_window_focus_lost() -> void:
+	if _pause_menu == null or _pause_menu.is_open() or _is_ui_open():
+		return
+	_pause_menu.open()
 
 
 func _on_shop_closed() -> void:

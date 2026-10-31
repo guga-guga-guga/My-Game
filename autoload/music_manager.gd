@@ -14,8 +14,9 @@ const TRACK_OVERWORLD := "res://resources/audio/1-27 Journey of the Prairie King
 const TRACK_OUTLAW := "res://resources/audio/1-28 Journey of the Prairie King (The Outlaw).mp3"
 const TRACK_FINAL_BOSS := "res://resources/audio/1-29 Journey of the Prairie King (Final Boss & Ending).mp3"
 
-const VOLUME_DB := -6.0            ## 正常音量（比音效轻一点）
-const SILENT_DB := -40.0           ## 淡出/淡入的静音端
+const VOLUME_DB := -6.0            ## 满音量参考值（100% 时用 0 dB，85% ≈ -6 dB）
+const SILENT_DB := -40.0           ## 淡出/淡入的静音端（也是 0% 时的音量）
+var volume_percent := 85           ## 背景音量 0~100%，由设置面板改
 const FADE_TIME := 0.6             ## 交叉淡出时长（秒）
 
 var play_count := 0                ## 真正切歌的次数（自检用）
@@ -36,6 +37,23 @@ func _ready() -> void:
 		add_child(player)
 		player.finished.connect(_on_player_finished.bind(player))
 		_players.append(player)
+
+
+## 设置面板用：0~100% -> dB 线性插值（0% = -40 dB 静音端，100% = 0 dB）
+func _target_db() -> float:
+	return lerpf(SILENT_DB, 0.0, clampf(float(volume_percent) / 100.0, 0.0, 1.0))
+
+
+## 改背景音量（立刻作用在当前播放器上；淡入淡出期间也能改）
+func set_volume_percent(percent: int) -> void:
+	volume_percent = clampi(percent, 0, 100)
+	if _tween != null and _tween.is_valid():
+		_tween.kill()                              # 正在淡入淡出就先停掉，直接设目标音量
+	for index in range(_players.size()):
+		if index == _active:
+			_players[index].volume_db = _target_db()
+		elif not _players[index].playing:
+			_players[index].volume_db = SILENT_DB
 
 
 func current_path() -> String:
@@ -98,7 +116,7 @@ func play(path: String) -> void:
 	play_count += 1
 	_tween = create_tween()
 	_tween.set_parallel(true)
-	_tween.tween_property(incoming, "volume_db", VOLUME_DB, FADE_TIME)
+	_tween.tween_property(incoming, "volume_db", _target_db(), FADE_TIME)
 	if outgoing.playing:
 		_tween.tween_property(outgoing, "volume_db", SILENT_DB, FADE_TIME)
 		_tween.chain().tween_callback(outgoing.stop)

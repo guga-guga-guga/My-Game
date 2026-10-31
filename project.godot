@@ -23,6 +23,7 @@ RunState="*res://autoload/run_state.gd"
 GameFlow="*res://autoload/game_flow.gd"
 DialogueManager="*res://autoload/dialogue_manager.gd"
 DebugPanel="*res://scene/ui/debug_panel.gd"
+GameSettings="*res://autoload/game_settings.gd"
 
 [display]
 

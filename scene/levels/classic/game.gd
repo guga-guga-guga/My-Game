@@ -483,6 +483,16 @@ func _setup_pause_menu() -> void:
 	_pause_menu = PauseMenuScript.new()
 	add_child(_pause_menu)
 	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
+	# 按 Win / Alt+Tab 让窗口失焦：自动弹暂停菜单（倒计时也一起停）
+	if not GameSettings.window_focus_lost.is_connected(_on_window_focus_lost):
+		GameSettings.window_focus_lost.connect(_on_window_focus_lost)
+
+
+## 窗口失焦（按 Win 键 / Alt+Tab）-> 直接暂停
+func _on_window_focus_lost() -> void:
+	if _pause_menu == null or _pause_menu.is_open() or is_result_displayed:
+		return
+	_pause_menu.open()
 
 
 func _check_pause_input() -> void:

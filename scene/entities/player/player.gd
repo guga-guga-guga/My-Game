@@ -64,6 +64,8 @@ var is_dead: bool = false
 @export var bullet_spawn_distance: float = 18.0
 
 func _ready() -> void:
+	# 鼠标射击模式下换成 3x2 像素的自定义准星（键盘模式用系统指针）
+	GameSettings.apply_cursor(GameSettings.is_mouse_shoot())
 	current_health = max(max_health, 1)
 	shooting_timer.one_shot = true
 	shooting_timer.wait_time = _get_effective_fire_interval()
@@ -72,6 +74,10 @@ func _ready() -> void:
 	_update_armed_effect()
 	
 	
+func _exit_tree() -> void:
+	GameSettings.apply_cursor(false)          # 离开战斗还原系统指针
+
+
 func _physics_process(delta: float) -> void:
 	_update_pickup_effects(delta)
 	_update_invincibility(delta)  # 添加这行来更新无敌状态
@@ -82,7 +88,14 @@ func _physics_process(delta: float) -> void:
 		return
 	
 	var move_input := Input.get_vector("move_left", "move_right", "move_up", "move_down")  
-	var shoot_input := Input.get_vector("shoot_left", "shoot_right", "shoot_up", "shoot_down") 
+	# 射击操作模式严格二选一：鼠标模式下方向键不再射击，改成朝光标方向打
+	var mouse_shoot := GameSettings.is_mouse_shoot()
+	var mouse_aim := Vector2.ZERO
+	var shoot_input := Vector2.ZERO
+	if mouse_shoot:
+		mouse_aim = global_position.direction_to(get_global_mouse_position())
+	else:
+		shoot_input = Input.get_vector("shoot_left", "shoot_right", "shoot_up", "shoot_down")
 	var is_moving := move_input != Vector2.ZERO
 
 	velocity = move_input * _get_effective_move_speed()
@@ -91,10 +104,14 @@ func _physics_process(delta: float) -> void:
 	
 	if current_shot_pattern == PickupConfig.ShotPattern.SPIRAL:
 		_try_auto_spiral_shoot()
+	elif mouse_shoot:
+		# 按住鼠标左键开火，方向就是光标方向（任意角度）
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and mouse_aim != Vector2.ZERO:
+			_try_shoot(mouse_aim)
 	elif shoot_input != Vector2.ZERO:
 		_try_shoot(shoot_input)
 
-	_update_facing(move_input, shoot_input)
+	_update_facing(move_input, mouse_aim if mouse_shoot else shoot_input)
 	_update_animation()
 	_update_armed_effect()
 	
@@ -114,6 +131,10 @@ func _update_animation() -> void:
 	
 	#射击方向优先与移动方向，螺旋状态下不读取射击输入仅按照移动方向更新动画
 func _update_facing(move_input: Vector2, shoot_input: Vector2) -> void:
+	# 鼠标模式下瞄准方向就是朝向（鼠标一直在动，所以每帧都跟着转）
+	if GameSettings.is_mouse_shoot() and shoot_input != Vector2.ZERO:
+		facing_suffix = _vector_to_facing_suffix(shoot_input)
+		return
 	if current_shot_pattern == PickupConfig.ShotPattern.SPIRAL:
 		if move_input != Vector2.ZERO:
 			facing_suffix = _vector_to_facing_suffix(move_input)
