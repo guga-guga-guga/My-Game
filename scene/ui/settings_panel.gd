@@ -9,6 +9,8 @@ extends CanvasLayer
 
 signal closed
 
+const CursorEditorScript = preload("res://scene/ui/cursor_editor.gd")
+
 const FONT_TITLE := 34
 const FONT_ROW := 22
 const FONT_HINT := 16
@@ -31,6 +33,7 @@ var _resolution_label: Label = null
 var _volume_label: Label = null
 var _shoot_labels: Array[Label] = []
 var _shoot_title: Label = null
+var _cursor_editor: Node = null        ## 自定义光标编辑器（只有鼠标射击时显示）
 var _selected := 0
 var _expanded := false
 var _expand_selected := 0
@@ -141,6 +144,11 @@ func _build_ui() -> void:
 		label.mouse_entered.connect(func() -> void: _hover_row(2))
 		_shoot_labels.append(label)
 
+	# ③.5 自定义光标编辑器：只有选了「鼠标射击」才显示（会撑高面板）
+	_cursor_editor = CursorEditorScript.new()
+	_cursor_editor.visible = false
+	box.add_child(_cursor_editor)
+
 	# ④ 关闭
 	var close_row := _make_row(box, "")
 	var close_label := _make_click_label(close_row, "关闭", func() -> void: _close())
@@ -197,6 +205,14 @@ func _refresh() -> void:
 		var chosen: bool = GameSettings.is_mouse_shoot() == (index == 1)
 		_shoot_labels[index].text = ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else (" %s " % SHOOT_MODE_TEXTS[index])
 		_shoot_labels[index].add_theme_color_override("font_color", COLOR_TEXT)
+	if _cursor_editor != null:
+		var want_editor := GameSettings.is_mouse_shoot()
+		_cursor_editor.visible = want_editor
+		if want_editor:
+			# 腾出空间：面板加高（编辑器 32x32 画布按 12 倍显示 = 384 高 + 若干行）
+			_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 620.0)
+		else:
+			_panel.custom_minimum_size = Vector2(PANEL_WIDTH, PANEL_HEIGHT)
 	_rebuild_expansion()
 
 

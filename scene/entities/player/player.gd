@@ -118,8 +118,10 @@ func _create_aim_cursor() -> void:
 	_aim_cursor.name = "AimCursor"
 	_aim_cursor.texture = GameSettings.aim_cursor_texture()
 	_aim_cursor.centered = false
-	_aim_cursor.offset = Vector2(-1.0, -1.0)          # 让三角尖对准鼠标点
+	# 热点：默认倒三角对准尖角，自定义光标对准画布正中
+	_aim_cursor.offset = -GameSettings.aim_cursor_hotspot()
 	_aim_cursor.scale = Vector2(GameSettings.CURSOR_BLOCK_SCALE, GameSettings.CURSOR_BLOCK_SCALE)
+	_aim_cursor.set_meta("cursor_kind", GameSettings.cursor_kind)
 	_aim_cursor.z_as_relative = false
 	_aim_cursor.z_index = 150
 	_aim_cursor.top_level = true
@@ -133,6 +135,9 @@ func _refresh_aim_cursor() -> void:
 	GameSettings.apply_cursor(want)
 	if GameSettings.is_mouse_shoot():
 		_create_aim_cursor()                          # 鼠标模式：把 sprite 建好
+		# 光标可能被换成自定义画布：贴图和热点都要跟着更新
+		_aim_cursor.texture = GameSettings.aim_cursor_texture()
+		_aim_cursor.offset = -GameSettings.aim_cursor_hotspot()
 		_aim_cursor.visible = _aim_cursor_active
 	else:
 		_aim_cursor_active = false

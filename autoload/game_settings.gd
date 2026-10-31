@@ -111,9 +111,103 @@ var _aim_cursor_texture: Texture2D = null
 
 
 func aim_cursor_texture() -> Texture2D:
+	if cursor_kind != CURSOR_KIND_TRIANGLE and not custom_cursor_b64.is_empty():
+		return ImageTexture.create_from_image(cursor_canvas_image())
 	if _aim_cursor_texture == null:
 		_aim_cursor_texture = _make_aim_cursor()
 	return _aim_cursor_texture
+
+
+# ---------------- 自定义光标（32x32 画布）----------------
+
+const CURSOR_CANVAS_SIZE := 32
+const CURSOR_KIND_TRIANGLE := "triangle"
+const CURSOR_KIND_CUSTOM := "custom"
+const CURSOR_NAME_MAX := 12
+
+var cursor_kind := CURSOR_KIND_TRIANGLE   ## triangle / custom
+var custom_cursor_b64 := ""               ## 当前自定义光标的 32x32 RGBA，base64
+var saved_cursors: Dictionary = {}        ## 名字 -> base64（暂存的预设）
+
+
+## 当前画布图像（没自定义过就是全透明 32x32）
+func cursor_canvas_image() -> Image:
+	if custom_cursor_b64.is_empty():
+		return Image.create(CURSOR_CANVAS_SIZE, CURSOR_CANVAS_SIZE, false, Image.FORMAT_RGBA8)
+	var raw := Marshalls.base64_to_raw(custom_cursor_b64)
+	if raw.size() != CURSOR_CANVAS_SIZE * CURSOR_CANVAS_SIZE * 4:
+		return Image.create(CURSOR_CANVAS_SIZE, CURSOR_CANVAS_SIZE, false, Image.FORMAT_RGBA8)
+	var image := Image.create_from_data(CURSOR_CANVAS_SIZE, CURSOR_CANVAS_SIZE, false,
+			Image.FORMAT_RGBA8, raw)
+	if image == null:
+		return Image.create(CURSOR_CANVAS_SIZE, CURSOR_CANVAS_SIZE, false, Image.FORMAT_RGBA8)
+	return image
+
+
+## 「保持设置」：把画布存成当前光标并立刻生效
+func apply_cursor_canvas(image: Image) -> void:
+	custom_cursor_b64 = Marshalls.raw_to_base64(image.get_data())
+	cursor_kind = CURSOR_KIND_CUSTOM
+	save_settings()
+	changed.emit()
+
+
+## 「暂存设置」：把画布存成一个带名字的预设（不改变当前使用的光标）
+func save_cursor_preset(preset_name: String, image: Image) -> bool:
+	var trimmed := preset_name.strip_edges()
+	if trimmed.is_empty():
+		return false
+	saved_cursors[trimmed.substr(0, CURSOR_NAME_MAX)] = Marshalls.raw_to_base64(image.get_data())
+	save_settings()
+	changed.emit()
+	return true
+
+
+func delete_cursor_preset(preset_name: String) -> void:
+	if saved_cursors.has(preset_name):
+		saved_cursors.erase(preset_name)
+		if cursor_kind == preset_name:
+			cursor_kind = CURSOR_KIND_TRIANGLE
+		save_settings()
+		changed.emit()
+
+
+## 选一个光标："" = 默认倒三角，其它 = 暂存预设名
+func select_cursor(preset_name: String) -> void:
+	if preset_name.is_empty() or not saved_cursors.has(preset_name):
+		cursor_kind = CURSOR_KIND_TRIANGLE
+		custom_cursor_b64 = ""
+	else:
+		cursor_kind = preset_name
+		custom_cursor_b64 = String(saved_cursors[preset_name])
+	save_settings()
+	changed.emit()
+
+
+## 下拉列表：第一项是默认倒三角，后面是暂存预设
+func cursor_choices() -> Array[String]:
+	var out: Array[String] = ["默认倒三角"]
+	var names := saved_cursors.keys()
+	names.sort()
+	for name in names:
+		out.append(String(name))
+	return out
+
+
+func cursor_choice_index() -> int:
+	if cursor_kind == CURSOR_KIND_TRIANGLE or cursor_kind == CURSOR_KIND_CUSTOM:
+		return 0
+	var names := saved_cursors.keys()
+	names.sort()
+	var index := names.find(cursor_kind)
+	return 0 if index < 0 else index + 1
+
+
+## 准星热点（贴图坐标）：默认倒三角用尖角，自定义光标用画布正中
+func aim_cursor_hotspot() -> Vector2:
+	if cursor_kind == CURSOR_KIND_TRIANGLE or custom_cursor_b64.is_empty():
+		return Vector2(1.0, 1.0)
+	return Vector2(CURSOR_CANVAS_SIZE, CURSOR_CANVAS_SIZE) * 0.5
 
 
 ## 鼠标射击：藏掉系统指针（准星由玩家节点自己画）；键盘射击：恢复系统指针
@@ -193,6 +287,13 @@ func load_settings() -> void:
 	shoot_mode = String(config.get_value("input", "shoot_mode", SHOOT_MODE_KEYBOARD))
 	if shoot_mode != SHOOT_MODE_MOUSE:
 		shoot_mode = SHOOT_MODE_KEYBOARD
+	cursor_kind = String(config.get_value("input", "cursor_kind", CURSOR_KIND_TRIANGLE))
+	custom_cursor_b64 = String(config.get_value("input", "custom_cursor", ""))
+	saved_cursors.clear()
+	var presets = config.get_value("input", "saved_cursors", {})
+	if typeof(presets) == TYPE_DICTIONARY:
+		for key in presets.keys():
+			saved_cursors[String(key)] = String(presets[key])
 
 
 func save_settings() -> void:
@@ -201,6 +302,9 @@ func save_settings() -> void:
 	config.set_value("window", "fullscreen", fullscreen)
 	config.set_value("audio", "volume_percent", volume_percent)
 	config.set_value("input", "shoot_mode", shoot_mode)
+	config.set_value("input", "cursor_kind", cursor_kind)
+	config.set_value("input", "custom_cursor", custom_cursor_b64)
+	config.set_value("input", "saved_cursors", saved_cursors)
 	var err := config.save(SETTINGS_PATH)
 	if err != OK:
 		push_warning("[GameSettings] 设置写入失败: %s" % SETTINGS_PATH)
