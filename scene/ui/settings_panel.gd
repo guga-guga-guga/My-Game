@@ -32,6 +32,7 @@ var _expansion_box: VBoxContainer = null
 var _resolution_label: Label = null
 var _volume_label: Label = null
 var _shoot_labels: Array[Label] = []
+var _shoot_col := 0                    ## 射击行里当前高亮的第几个选项
 var _shoot_title: Label = null
 var _cursor_editor: Node = null        ## 自定义光标编辑器（只有鼠标射击时显示）
 var _scroll: ScrollContainer = null    ## 内容滚动容器
@@ -151,7 +152,7 @@ func _build_ui() -> void:
 	for index in range(SHOOT_MODE_TEXTS.size()):
 		var label := _make_click_label(shoot_row, SHOOT_MODE_TEXTS[index],
 			func() -> void: _choose_shoot_mode(index))
-		label.mouse_entered.connect(func() -> void: _hover_row(2))
+		label.mouse_entered.connect(func() -> void: _hover_shoot(index))
 		_shoot_labels.append(label)
 
 	# ③.5 自定义光标编辑器：只有选了「鼠标射击」才显示（会撑高面板）
@@ -208,14 +209,14 @@ func _refresh() -> void:
 	_volume_label.text = "%d%%" % GameSettings.volume_percent
 	_volume_label.add_theme_color_override("font_color",
 		COLOR_SELECTED if _selected == 1 else COLOR_TEXT)
-	# 射击操作：用方框 [xxx] 表示"当前选择的模式"，文字本身不再变黄（避免和行高亮重复）
-	if _shoot_title != null:
-		_shoot_title.add_theme_color_override("font_color",
-			COLOR_SELECTED if _selected == 2 else COLOR_HINT)
+	# 射击操作：方框 [xxx] 表示"已选模式"；「> 」+ 黄字表示"当前高亮/悬停的那一项"
 	for index in range(_shoot_labels.size()):
 		var chosen: bool = GameSettings.is_mouse_shoot() == (index == 1)
-		_shoot_labels[index].text = ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else (" %s " % SHOOT_MODE_TEXTS[index])
-		_shoot_labels[index].add_theme_color_override("font_color", COLOR_TEXT)
+		var highlighted := _selected == 2 and _shoot_col == index
+		var text := ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else (" %s " % SHOOT_MODE_TEXTS[index])
+		_shoot_labels[index].text = ("> " if highlighted else "  ") + text
+		_shoot_labels[index].add_theme_color_override("font_color",
+			COLOR_SELECTED if highlighted else COLOR_TEXT)
 	if _cursor_editor != null:
 		# 编辑器显不显示只影响内容高度；面板高度固定，超出部分用滚轮/键盘滚动看
 		_cursor_editor.visible = GameSettings.is_mouse_shoot()
@@ -275,6 +276,13 @@ func _choose_expansion(index: int) -> void:
 
 
 ## 鼠标移到哪一行，就把"当前选中行"挪过去（这样黄框也会跟着鼠标走）
+## 鼠标移到射击行的某一项：选中这行并把高亮挪到那一项
+func _hover_shoot(index: int) -> void:
+	_selected = 2
+	_shoot_col = index
+	_refresh()
+
+
 func _hover_row(row: int) -> void:
 	if _expanded and row == 0:
 		return                                    # 展开列表时，悬停第一行不收起也不换行
@@ -338,6 +346,7 @@ func _handle_event(event: InputEvent) -> bool:
 			_change_volume(-GameSettings.VOLUME_STEP)
 			return true
 		if not _expanded and _selected == 2:
+			_shoot_col = 0
 			_choose_shoot_mode(0)
 			return true
 		return false
@@ -346,6 +355,7 @@ func _handle_event(event: InputEvent) -> bool:
 			_change_volume(GameSettings.VOLUME_STEP)
 			return true
 		if not _expanded and _selected == 2:
+			_shoot_col = 1
 			_choose_shoot_mode(1)
 			return true
 		return false
@@ -359,6 +369,8 @@ func _handle_event(event: InputEvent) -> bool:
 			_expand_selected = GameSettings.RESOLUTIONS.size() if GameSettings.fullscreen \
 				else GameSettings.resolution_index
 			_refresh()
+		elif _selected == 2:
+			_choose_shoot_mode(_shoot_col)      # E 确认当前高亮的那一项
 		elif _selected == 3:
 			_close()
 		return true

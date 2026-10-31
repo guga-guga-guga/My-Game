@@ -74,6 +74,11 @@ func _build_ui() -> void:
 		label.add_theme_font_size_override("font_size", FONT_BODY)
 		label.mouse_filter = Control.MOUSE_FILTER_STOP
 		label.gui_input.connect(_on_row_gui_input.bind(index))
+		# 鼠标悬停 = 选中这一项（黄字 + "> " 箭头跟着鼠标走）
+		label.mouse_entered.connect(func() -> void:
+			if _selected != index:
+				_selected = index
+				_refresh())
 		box.add_child(label)
 		_rows.append(label)
 

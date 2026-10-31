@@ -18,8 +18,8 @@ var palette_colors: Array[Color] = []
 
 var _open := false
 var _canvas: Control = null
-var _palette_scroll: ScrollContainer = null
-var _palette_strip: HBoxContainer = null
+var _palette_strip: Control = null
+var _palette_offset := 0                ## 调色板当前从第几个色块开始显示
 var _dragging := false
 var _erase_drag := false
 
@@ -41,7 +41,9 @@ func open(image: Image, color: Color, palette: Array[Color]) -> void:
 	palette_colors = palette
 	_open = true
 	visible = true
+	_palette_offset = 0
 	_canvas.queue_redraw()
+	_palette_strip.queue_redraw()
 	print("[CursorZoom] 放大编辑界面打开")
 
 
@@ -99,16 +101,13 @@ func _build_ui() -> void:
 	_canvas.gui_input.connect(_on_canvas_input)
 	body.add_child(_canvas)
 
-	# 一横排调色板：只露 4 个，超出用滚轮横向滚动
-	_palette_scroll = ScrollContainer.new()
-	_palette_scroll.custom_minimum_size = Vector2(SWATCH * VISIBLE_SWATCHES + 16.0, SWATCH + 16.0)
-	_palette_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_palette_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_palette_scroll.gui_input.connect(_on_palette_wheel)
-	body.add_child(_palette_scroll)
-	_palette_strip = HBoxContainer.new()
-	_palette_strip.add_theme_constant_override("separation", 2)
-	_palette_scroll.add_child(_palette_strip)
+	# 一横排调色板：固定露 4 个，鼠标滚轮一次滚一格（自己画，不用 ScrollContainer）
+	_palette_strip = Control.new()
+	_palette_strip.custom_minimum_size = Vector2(SWATCH * VISIBLE_SWATCHES, SWATCH)
+	_palette_strip.mouse_filter = Control.MOUSE_FILTER_STOP
+	_palette_strip.draw.connect(_draw_palette)
+	_palette_strip.gui_input.connect(_on_palette_input)
+	body.add_child(_palette_strip)
 
 	var close_row := HBoxContainer.new()
 	close_row.add_theme_constant_override("separation", 12)
@@ -121,35 +120,40 @@ func _build_ui() -> void:
 	close_row.add_child(close_button)
 
 
-func _process(_delta: float) -> void:
-	# 调色板色块按需生成（等打开的瞬间颜色表就位）
-	if not _open or _palette_strip.get_child_count() == palette_colors.size():
+## 画一横排（只画当前可见的 4 个）
+func _draw_palette() -> void:
+	if _palette_strip == null:
 		return
-	for child in _palette_strip.get_children():
-		child.queue_free()
-	for color in palette_colors:
-		var swatch := ColorRect.new()
-		swatch.custom_minimum_size = Vector2(SWATCH - 2.0, SWATCH - 2.0)
-		swatch.color = color
-		swatch.mouse_filter = Control.MOUSE_FILTER_STOP
-		swatch.gui_input.connect(func(event: InputEvent) -> void:
-			var mouse := event as InputEventMouseButton
-			if mouse != null and mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
-				current_color = color)
-		_palette_strip.add_child(swatch)
+	_palette_strip.draw_rect(Rect2(0, 0, SWATCH * VISIBLE_SWATCHES, SWATCH),
+		Color(0.10, 0.10, 0.12))
+	for slot in range(VISIBLE_SWATCHES):
+		var index := _palette_offset + slot
+		if index >= palette_colors.size():
+			break
+		var rect := Rect2(slot * SWATCH, 0, SWATCH - 2.0, SWATCH - 2.0)
+		_palette_strip.draw_rect(rect, palette_colors[index])
+		if palette_colors[index].is_equal_approx(current_color):
+			_palette_strip.draw_rect(rect, Color(1, 1, 1, 1), false, 2.0)
 
 
-## 滚轮 = 横向滚调色板
-func _on_palette_wheel(event: InputEvent) -> void:
-	var wheel := event as InputEventMouseButton
-	if wheel == null or not wheel.pressed:
+## 滚轮：一次滚一格；左键：选颜色
+func _on_palette_input(event: InputEvent) -> void:
+	var mouse := event as InputEventMouseButton
+	if mouse == null or not mouse.pressed:
 		return
-	if wheel.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-		_palette_scroll.scroll_horizontal = int(_palette_scroll.scroll_horizontal + SWATCH)
-		_palette_scroll.accept_event()
-	elif wheel.button_index == MOUSE_BUTTON_WHEEL_UP:
-		_palette_scroll.scroll_horizontal = maxi(int(_palette_scroll.scroll_horizontal - SWATCH), 0)
-		_palette_scroll.accept_event()
+	if mouse.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_palette_offset = clampi(_palette_offset + 1, 0, maxi(palette_colors.size() - VISIBLE_SWATCHES, 0))
+		_palette_strip.queue_redraw()
+	elif mouse.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_palette_offset = clampi(_palette_offset - 1, 0, maxi(palette_colors.size() - VISIBLE_SWATCHES, 0))
+		_palette_strip.queue_redraw()
+	elif mouse.button_index == MOUSE_BUTTON_LEFT:
+		var slot := int(floor(mouse.position.x / SWATCH))
+		var index := _palette_offset + slot
+		if index >= 0 and index < palette_colors.size():
+			current_color = palette_colors[index]
+			_palette_strip.queue_redraw()
+	_palette_strip.accept_event()
 
 
 # ---------------- 画布 ----------------
@@ -222,9 +226,22 @@ func debug_paint(cell: Vector2i, erase: bool = false) -> void:
 
 
 func debug_swatch_count() -> int:
-	return _palette_strip.get_child_count()
+	return palette_colors.size()
+
+
+func debug_visible_swatches() -> int:
+	return VISIBLE_SWATCHES
+
+
+func debug_palette_offset() -> int:
+	return _palette_offset
 
 
 func debug_scroll_palette(steps: int) -> int:
-	_palette_scroll.scroll_horizontal = maxi(int(_palette_scroll.scroll_horizontal + steps * SWATCH), 0)
-	return int(_palette_scroll.scroll_horizontal)
+	var event := InputEventMouseButton.new()
+	event.pressed = true
+	event.button_index = MOUSE_BUTTON_WHEEL_DOWN if steps > 0 else MOUSE_BUTTON_WHEEL_UP
+	event.position = Vector2(SWATCH * 0.5, SWATCH * 0.5)
+	for _i in range(absi(steps)):
+		_on_palette_input(event)
+	return _palette_offset

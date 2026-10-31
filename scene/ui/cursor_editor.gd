@@ -100,6 +100,7 @@ func _build_ui() -> void:
 	add_child(buttons)
 	buttons.add_child(_make_button("保持设置", _on_keep))
 	buttons.add_child(_make_button("暂存设置", _on_stash))
+	buttons.add_child(_make_button("读取设置", _on_load))
 
 	# 命名行（点「暂存设置」才出现）
 	_naming_row = HBoxContainer.new()
@@ -252,6 +253,13 @@ func _on_stash() -> void:
 	_name_edit.text = ""
 	_name_edit.grab_focus()
 	_message.text = "给这个光标起个名字，确定后会存进下拉列表"
+
+
+## 读取设置：展开下面的光标列表，把之前暂存的光标读回画布
+func _on_load() -> void:
+	_cursor_expanded = true
+	_refresh()
+	_message.text = "在下面的列表里选一个暂存的光标读回画布"
 
 
 func _on_name_confirm() -> void:

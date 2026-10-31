@@ -110,6 +110,10 @@ func _rebuild_options() -> void:
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.custom_minimum_size = Vector2(OPTION_WIDTH, 0)
 		button.pressed.connect(_on_option_pressed.bind(index))
+		button.mouse_entered.connect(func() -> void:
+			if _selected != index:
+				_selected = index
+				_refresh_option_text())
 		_option_box.add_child(button)
 		_buttons.append(button)
 	_refresh_option_text()
