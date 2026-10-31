@@ -34,6 +34,8 @@ var _volume_label: Label = null
 var _shoot_labels: Array[Label] = []
 var _shoot_title: Label = null
 var _cursor_editor: Node = null        ## 自定义光标编辑器（只有鼠标射击时显示）
+var _scroll: ScrollContainer = null    ## 内容滚动容器
+var _close_label: Label = null
 var _selected := 0
 var _expanded := false
 var _expand_selected := 0
@@ -98,9 +100,17 @@ func _build_ui() -> void:
 	_panel.add_theme_stylebox_override("panel", style)
 	_root.add_child(_panel)
 
+	# 内容放进 ScrollContainer：内容多了可以用滚轮 / 键盘滚动
+	_scroll = ScrollContainer.new()
+	_scroll.custom_minimum_size = Vector2(PANEL_WIDTH - 48.0, PANEL_HEIGHT - 48.0)
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_panel.add_child(_scroll)
+
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
-	_panel.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(box)
 	_make_label(box, "设置", FONT_TITLE, COLOR_TITLE)
 
 	# ① 分辨率：折叠时只有一行当前值，点它展开
@@ -152,6 +162,7 @@ func _build_ui() -> void:
 	# ④ 关闭
 	var close_row := _make_row(box, "")
 	var close_label := _make_click_label(close_row, "关闭", func() -> void: _close())
+	_close_label = close_label
 	close_label.add_theme_color_override("font_color", COLOR_TEXT)
 	close_label.mouse_entered.connect(func() -> void: _hover_row(3))
 	close_label.mouse_exited.connect(func() -> void: _refresh())
@@ -206,14 +217,24 @@ func _refresh() -> void:
 		_shoot_labels[index].text = ("[%s]" % SHOOT_MODE_TEXTS[index]) if chosen else (" %s " % SHOOT_MODE_TEXTS[index])
 		_shoot_labels[index].add_theme_color_override("font_color", COLOR_TEXT)
 	if _cursor_editor != null:
-		var want_editor := GameSettings.is_mouse_shoot()
-		_cursor_editor.visible = want_editor
-		if want_editor:
-			# 腾出空间：面板加高（编辑器 32x32 画布按 12 倍显示 = 384 高 + 若干行）
-			_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 620.0)
-		else:
-			_panel.custom_minimum_size = Vector2(PANEL_WIDTH, PANEL_HEIGHT)
+		# 编辑器显不显示只影响内容高度；面板高度固定，超出部分用滚轮/键盘滚动看
+		_cursor_editor.visible = GameSettings.is_mouse_shoot()
 	_rebuild_expansion()
+
+
+## 键盘换行时，把选中行滚到可视区域里
+func _ensure_selected_visible() -> void:
+	if _scroll == null:
+		return
+	var target: Control = null
+	if _selected == 1:
+		target = _volume_label
+	elif _selected == 2:
+		target = _shoot_title
+	elif _selected == 3:
+		target = _close_label
+	if target != null and is_instance_valid(target):
+		_scroll.ensure_control_visible(target)
 
 
 func _rebuild_expansion() -> void:
@@ -302,6 +323,7 @@ func _handle_event(event: InputEvent) -> bool:
 		else:
 			_selected = wrapi(_selected - 1, 0, 4)
 		_refresh()
+		_ensure_selected_visible()
 		return true
 	if event.is_action_pressed("move_down") or event.is_action_pressed("ui_down"):
 		if _expanded:
@@ -309,6 +331,7 @@ func _handle_event(event: InputEvent) -> bool:
 		else:
 			_selected = wrapi(_selected + 1, 0, 4)
 		_refresh()
+		_ensure_selected_visible()
 		return true
 	if event.is_action_pressed("move_left") or event.is_action_pressed("ui_left"):
 		if not _expanded and _selected == 1:

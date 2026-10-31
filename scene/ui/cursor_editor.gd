@@ -9,6 +9,7 @@ extends VBoxContainer
 signal canvas_changed
 
 const PALETTE_PATH := "res://resources/texture/palette.png"
+const CursorZoomScript := preload("res://scene/ui/cursor_zoom_panel.gd")
 const CANVAS_SIZE := 32
 const CANVAS_ZOOM := 6                      ## 画布上每个像素显示成 6x6（32x32 -> 192x192）
 const PALETTE_COLUMNS := 12
@@ -32,6 +33,7 @@ var _cursor_label: Label = null
 var _cursor_list: VBoxContainer = null
 var _cursor_expanded := false
 
+var _zoom_panel = null
 var _dragging := false
 var _erase_drag := false
 
@@ -76,6 +78,14 @@ func _build_ui() -> void:
 	_canvas.draw.connect(_draw_canvas)
 	_canvas.gui_input.connect(_on_canvas_input)
 	top.add_child(_canvas)
+
+	# 画布右边一列：放大按钮
+	var canvas_side := VBoxContainer.new()
+	canvas_side.add_theme_constant_override("separation", 8)
+	top.add_child(canvas_side)
+	var zoom_button := _make_button("放大", _on_zoom)
+	zoom_button.custom_minimum_size = Vector2(90.0, 34.0)
+	canvas_side.add_child(zoom_button)
 
 	_palette = Control.new()
 	_palette.custom_minimum_size = Vector2(PALETTE_COLUMNS * SWATCH_SIZE, 12.0 * SWATCH_SIZE)
@@ -215,6 +225,22 @@ func _on_palette_input(event: InputEvent) -> void:
 # ---------------- 保存 / 暂存 / 选择 ----------------
 
 ## 保持设置：把画布存成"当前自定义光标"并立刻生效
+## 放大：弹出一个更大的画布（同一份 Image，改完自动同步回来）+ 一横排可滚动调色板
+func _on_zoom() -> void:
+	if _zoom_panel == null:
+		_zoom_panel = CursorZoomScript.new()
+		add_child(_zoom_panel)
+		_zoom_panel.edited.connect(func() -> void: _canvas.queue_redraw())
+		_zoom_panel.closed.connect(func() -> void:
+			_canvas.queue_redraw()
+			canvas_changed.emit())
+	_zoom_panel.open(canvas_image, current_color, palette_colors)
+
+
+func debug_zoom_panel() -> Node:
+	return _zoom_panel
+
+
 func _on_keep() -> void:
 	GameSettings.apply_cursor_canvas(canvas_image)
 	_message.text = "已保存并应用当前光标"
