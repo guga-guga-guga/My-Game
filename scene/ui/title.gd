@@ -247,7 +247,8 @@ func _make_button(text: String, node_name: String) -> Button:
 	button.add_theme_color_override("font_pressed_color", COLOR_TITLE)
 	button.mouse_entered.connect(func() -> void:
 		_hover_index = _buttons.find(button)
-		button.grab_focus())
+		button.grab_focus()
+		_refresh_button_marks())      # 立刻刷新：否则箭头要等鼠标移开才跟上
 	button.mouse_exited.connect(func() -> void:
 		if _hover_index == _buttons.find(button):
 			_hover_index = -1
@@ -262,7 +263,7 @@ func _refresh_button_marks() -> void:
 	for index in range(_buttons.size()):
 		var button := _buttons[index]
 		var base_text := String(button.get_meta("base_text", button.text))
-		var chosen := button.has_focus()
+		var chosen := (index == _hover_index) if _hover_index >= 0 else button.has_focus()
 		button.text = ("> " + base_text) if chosen else ("   " + base_text)
 		button.add_theme_color_override("font_color", COLOR_TITLE if chosen else COLOR_TEXT)
 
