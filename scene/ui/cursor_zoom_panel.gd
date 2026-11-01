@@ -109,6 +109,7 @@ func _build_ui() -> void:
 	# 顶边与画布齐平、底边与画布底部齐平
 	_palette_strip.custom_minimum_size = Vector2(PALETTE_WIDTH, CANVAS_SIZE * ZOOM)
 	_palette_strip.size_flags_vertical = Control.SIZE_FILL
+	_palette_strip.clip_contents = true        # 超出的行裁掉，只显示画布高度范围内的
 	_palette_strip.mouse_filter = Control.MOUSE_FILTER_STOP
 	_palette_strip.draw.connect(_draw_palette)
 	_palette_strip.gui_input.connect(_on_palette_input)
@@ -127,10 +128,22 @@ func _build_ui() -> void:
 
 
 ## 画一横排（只画当前可见的 4 个）
-## 4 列 × N 行：N 由颜色数量决定，格子高度按画布高度均分，palette.png 的颜色全部显示出来
+## 色块是正方形：边长 = 调色板宽度 / 4；超出画布高度的部分裁掉，用滚轮上下查看
 func _swatch_size() -> Vector2:
-	var rows := maxi(int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS))), 1)
-	return Vector2(PALETTE_WIDTH / float(PALETTE_COLUMNS), float(CANVAS_SIZE * ZOOM) / float(rows))
+	var side := PALETTE_WIDTH / float(PALETTE_COLUMNS)
+	return Vector2(side, side)
+
+
+## 一屏能放下几行（不足一行也算一行）
+func _visible_rows() -> int:
+	var side := _swatch_size().y
+	return maxi(int(ceil(float(CANVAS_SIZE * ZOOM) / side)), 1)
+
+
+## 最多能滚到第几行
+func _max_offset() -> int:
+	var total_rows := int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS)))
+	return maxi(total_rows - _visible_rows(), 0)
 
 
 func _draw_palette() -> void:
@@ -138,13 +151,20 @@ func _draw_palette() -> void:
 		return
 	_palette_strip.draw_rect(Rect2(0, 0, PALETTE_WIDTH, CANVAS_SIZE * ZOOM), Color(0.10, 0.10, 0.12))
 	var cell := _swatch_size()
-	for index in range(palette_colors.size()):
-		var col := index % PALETTE_COLUMNS
-		var row := index / PALETTE_COLUMNS
-		var rect := Rect2(col * cell.x, row * cell.y, cell.x - 1.0, cell.y - 1.0)
-		_palette_strip.draw_rect(rect, palette_colors[index])
-		if palette_colors[index].is_equal_approx(current_color):
-			_palette_strip.draw_rect(rect, Color(1, 1, 1, 1), false, 2.0)
+	var total_rows := int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS)))
+	for row_offset in range(_visible_rows()):
+		var row := _palette_offset + row_offset
+		if row >= total_rows:
+			break
+		for col in range(PALETTE_COLUMNS):
+			var index := row * PALETTE_COLUMNS + col
+			if index >= palette_colors.size():
+				break
+			# 减去滚动偏移，超出的部分由 clip_contents 裁掉
+			var rect := Rect2(col * cell.x, row_offset * cell.y, cell.x - 2.0, cell.y - 2.0)
+			_palette_strip.draw_rect(rect, palette_colors[index])
+			if palette_colors[index].is_equal_approx(current_color):
+				_palette_strip.draw_rect(rect, Color(1, 1, 1, 1), false, 2.0)
 
 
 ## 滚轮：一次滚一格；左键：选颜色
@@ -152,7 +172,7 @@ func _on_palette_input(event: InputEvent) -> void:
 	var mouse := event as InputEventMouseButton
 	if mouse == null or not mouse.pressed:
 		return
-	var max_row := 0            # 颜色全部一屏显示完，不需要滚动了
+	var max_row := _max_offset()
 	if mouse.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 		_palette_offset = clampi(_palette_offset + 1, 0, max_row)      # 一次滚一行
 		_palette_strip.queue_redraw()
@@ -162,7 +182,7 @@ func _on_palette_input(event: InputEvent) -> void:
 	elif mouse.button_index == MOUSE_BUTTON_LEFT:
 		var cell := _swatch_size()
 		var col := int(floor(mouse.position.x / cell.x))
-		var row := int(floor(mouse.position.y / cell.y))
+		var row := _palette_offset + int(floor(mouse.position.y / cell.y))
 		var index := row * PALETTE_COLUMNS + col
 		if index >= 0 and index < palette_colors.size():
 			current_color = palette_colors[index]
