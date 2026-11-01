@@ -64,10 +64,35 @@ func _load_palette() -> void:
 				continue
 			color.a = 1.0
 			counts[color] = int(counts.get(color, 0)) + 1
-	var keys := counts.keys()
-	keys.sort_custom(func(a: Color, b: Color) -> bool: return int(counts[a]) > int(counts[b]))
-	for key in keys:
-		palette_colors.append(key)
+	# 重新排序：先无彩色（黑 -> 白），再有彩色（按色相 -> 同色相内按亮度）
+	palette_colors = _sort_palette(counts.keys())
+
+
+## 把一堆颜色排成好找的顺序：
+##   1) 低饱和（近似灰阶）放最前面，按亮度从暗到亮
+##   2) 其余按色相（红 -> 黄 -> 绿 -> 青 -> 蓝 -> 紫 -> 回红）排，同色相内按亮度从暗到亮
+func _sort_palette(source: Array) -> Array[Color]:
+	var grays: Array[Color] = []
+	var colored: Array[Color] = []
+	for item in source:
+		var color: Color = item
+		if color.s < 0.15:
+			grays.append(color)
+		else:
+			colored.append(color)
+	grays.sort_custom(func(a: Color, b: Color) -> bool: return a.v < b.v)
+	colored.sort_custom(func(a: Color, b: Color) -> bool:
+		if absf(a.h - b.h) > 0.002:
+			return a.h < b.h
+		if absf(a.s - b.s) > 0.002:
+			return a.s > b.s
+		return a.v < b.v)
+	var out: Array[Color] = []
+	for color in grays:
+		out.append(color)
+	for color in colored:
+		out.append(color)
+	return out
 
 
 func _build_ui() -> void:
