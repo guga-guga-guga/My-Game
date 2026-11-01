@@ -10,6 +10,7 @@ const ZOOM := 16                       ## 32x32 -> 512x512
 const SWATCH := 26.0
 const PALETTE_COLUMNS := 4              ## 每行 4 个色块
 const PALETTE_ROWS := 4                 ## 一屏 4 行（16 个），超出用滚轮滚
+const PIXEL_FONT: Font = preload("res://resources/font/IPix.ttf")
 const COLOR_TEXT := Color(0.88, 0.89, 0.92)
 const COLOR_HINT := Color(0.60, 0.64, 0.68)
 
@@ -88,6 +89,7 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "放大编辑光标（左键上色 / 右键擦除 / 滚轮滚调色板）"
 	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_font_override("font", PIXEL_FONT)
 	title.add_theme_color_override("font_color", Color(1.0, 0.87, 0.55))
 	box.add_child(title)
 
@@ -117,6 +119,7 @@ func _build_ui() -> void:
 	close_button.text = "关闭"
 	close_button.focus_mode = Control.FOCUS_NONE
 	close_button.custom_minimum_size = Vector2(130.0, 34.0)
+	close_button.add_theme_font_override("font", PIXEL_FONT)
 	close_button.pressed.connect(_close)
 	close_row.add_child(close_button)
 

@@ -10,6 +10,7 @@ extends CanvasLayer
 signal closed
 
 const CursorEditorScript = preload("res://scene/ui/cursor_editor.gd")
+const PIXEL_FONT: Font = preload("res://resources/font/IPix.ttf")   # 和游戏其它界面统一用像素字体
 
 const FONT_TITLE := 34
 const FONT_ROW := 22
@@ -204,6 +205,7 @@ func _make_label(parent: Node, text: String, font_size: int, color: Color) -> La
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_font_override("font", PIXEL_FONT)
 	label.add_theme_color_override("font_color", color)
 	parent.add_child(label)
 	return label

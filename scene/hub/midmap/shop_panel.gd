@@ -143,6 +143,10 @@ func _make_row(index: int, title_text: String) -> void:
 	row.add_theme_constant_override("separation", 12)
 	row.mouse_filter = Control.MOUSE_FILTER_STOP
 	row.gui_input.connect(_on_row_gui_input.bind(index))
+	row.mouse_entered.connect(func() -> void:
+		if _selected != index:
+			_selected = index
+			_refresh())
 	_row_box.add_child(row)
 	var name_label := Label.new()
 	name_label.text = title_text

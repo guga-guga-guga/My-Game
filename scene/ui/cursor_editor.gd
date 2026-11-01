@@ -10,6 +10,7 @@ signal canvas_changed
 
 const PALETTE_PATH := "res://resources/texture/palette.png"
 const CursorZoomScript := preload("res://scene/ui/cursor_zoom_panel.gd")
+const PIXEL_FONT: Font = preload("res://resources/font/IPix.ttf")
 const CANVAS_SIZE := 32
 const CANVAS_ZOOM := 6                      ## 画布上每个像素显示成 6x6（32x32 -> 192x192）
 const PALETTE_COLUMNS := 12
@@ -113,6 +114,7 @@ func _build_ui() -> void:
 	_name_edit.placeholder_text = "给这个光标起个名字（最多 12 字）"
 	_name_edit.max_length = GameSettings.CURSOR_NAME_MAX
 	_name_edit.custom_minimum_size = Vector2(320.0, 34.0)
+	_name_edit.add_theme_font_override("font", PIXEL_FONT)
 	_naming_row.add_child(_name_edit)
 	_naming_row.add_child(_make_button("确定", _on_name_confirm))
 	_naming_row.add_child(_make_button("取消", func() -> void: _naming_row.visible = false))
@@ -120,6 +122,7 @@ func _build_ui() -> void:
 	# 光标选择（折叠式，和分辨率同款交互）
 	_cursor_label = Label.new()
 	_cursor_label.add_theme_font_size_override("font_size", FONT_ROW)
+	_cursor_label.add_theme_font_override("font", PIXEL_FONT)
 	_cursor_label.add_theme_color_override("font_color", COLOR_TEXT)
 	_cursor_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	_cursor_label.gui_input.connect(func(event: InputEvent) -> void:
@@ -133,6 +136,7 @@ func _build_ui() -> void:
 
 	_message = Label.new()
 	_message.add_theme_font_size_override("font_size", FONT_HINT)
+	_message.add_theme_font_override("font", PIXEL_FONT)
 	_message.add_theme_color_override("font_color", COLOR_HINT)
 	add_child(_message)
 	_refresh()
@@ -144,6 +148,7 @@ func _make_button(text: String, on_press: Callable) -> Button:
 	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(130.0, 34.0)
 	button.add_theme_font_size_override("font_size", FONT_ROW)
+	button.add_theme_font_override("font", PIXEL_FONT)
 	button.pressed.connect(on_press)
 	return button
 

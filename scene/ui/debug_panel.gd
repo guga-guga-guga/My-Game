@@ -270,8 +270,24 @@ func open_panel() -> void:
 	_selected = 0
 	_col = 0
 	_reset_hold()
+	_connect_row_hover()
 	_refresh_all()
 	print("[DebugPanel] 已打开（游戏冻结）")
+
+
+## 给所有可选行接上鼠标悬停 = 选中（和键盘 W/S 同一套高亮）
+func _connect_row_hover() -> void:
+	for index in range(_selectable.size()):
+		var control := _selectable[index].get("control") as Control
+		if control == null or control.has_meta("hover_connected"):
+			continue
+		control.set_meta("hover_connected", true)
+		control.mouse_filter = Control.MOUSE_FILTER_STOP
+		control.mouse_entered.connect(func() -> void:
+			if _selected != index:
+				_selected = index
+				_col = 0
+				_refresh_all())
 
 
 func close_panel() -> void:

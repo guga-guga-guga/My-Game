@@ -106,6 +106,10 @@ func _build_ui() -> void:
 		row.add_theme_font_size_override("font_size", FONT_BODY)
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.gui_input.connect(_on_row_gui_input.bind(index))
+		row.mouse_entered.connect(func() -> void:
+			if _selected != index:
+				_selected = index
+				_refresh())
 		main_box.add_child(row)
 		_rows.append(row)
 		main_box.add_child(_make_hint("    " + String(MAIN_OPTIONS[index]["hint"])))
@@ -132,6 +136,10 @@ func _build_ui() -> void:
 		boss_row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		boss_row.mouse_filter = Control.MOUSE_FILTER_STOP
 		boss_row.gui_input.connect(_on_boss_row_gui_input.bind(index))
+		boss_row.mouse_entered.connect(func() -> void:
+			if _boss_selected != index:
+				_boss_selected = index
+				_refresh())
 		column.add_child(boss_row)
 		_boss_rows.append(boss_row)
 		column.add_child(_make_hint(String(BOSS_OPTIONS[index]["hint"])))
