@@ -228,9 +228,14 @@ func _refresh() -> void:
 	_resolution_label.text = mark + GameSettings.display_text() + ("   [收起]" if _expanded else "   [展开]")
 	_resolution_label.add_theme_color_override("font_color",
 		COLOR_SELECTED if _selected == 0 else COLOR_TEXT)
-	_volume_label.text = "%d%%" % GameSettings.volume_percent
+	_volume_label.text = ("> " if _selected == 1 else "  ") + "%d%%" % GameSettings.volume_percent
 	_volume_label.add_theme_color_override("font_color",
 		COLOR_SELECTED if _selected == 1 else COLOR_TEXT)
+	if _close_label != null:
+		var close_chosen := _selected == 3
+		_close_label.text = ("> 关闭" if close_chosen else "  关闭")
+		_close_label.add_theme_color_override("font_color",
+			COLOR_SELECTED if close_chosen else COLOR_TEXT)
 	# 射击操作：方框 [xxx] 表示"已选模式"；「> 」+ 黄字表示"当前高亮/悬停的那一项"
 	for index in range(_shoot_labels.size()):
 		var chosen: bool = GameSettings.is_mouse_shoot() == (index == 1)
