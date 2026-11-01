@@ -134,10 +134,10 @@ func _swatch_size() -> Vector2:
 	return Vector2(side, side)
 
 
-## 一屏能放下几行（不足一行也算一行）
+## 一屏能**完整**放下几行（向下取整）；滚到底时最后一行才不会被切掉
 func _visible_rows() -> int:
 	var side := _swatch_size().y
-	return maxi(int(ceil(float(CANVAS_SIZE * ZOOM) / side)), 1)
+	return maxi(int(floor(float(CANVAS_SIZE * ZOOM) / side)), 1)
 
 
 ## 最多能滚到第几行
@@ -152,7 +152,7 @@ func _draw_palette() -> void:
 	_palette_strip.draw_rect(Rect2(0, 0, PALETTE_WIDTH, CANVAS_SIZE * ZOOM), Color(0.10, 0.10, 0.12))
 	var cell := _swatch_size()
 	var total_rows := int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS)))
-	for row_offset in range(_visible_rows()):
+	for row_offset in range(_visible_rows() + 1):      # 多画一行：非底部时露出半行提示还有内容
 		var row := _palette_offset + row_offset
 		if row >= total_rows:
 			break
