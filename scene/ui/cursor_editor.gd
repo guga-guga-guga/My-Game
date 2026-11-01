@@ -34,6 +34,8 @@ var _cursor_list: VBoxContainer = null
 var _cursor_expanded := false
 
 var _zoom_panel = null
+var _undo_stack: Array = []            ## 撤回栈（最多 UNDO_LIMIT 步）
+const UNDO_LIMIT := 50
 var _dragging := false
 var _erase_drag := false
 
@@ -98,7 +100,7 @@ func _build_ui() -> void:
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 18)
 	add_child(buttons)
-	buttons.add_child(_make_button("保持设置", _on_keep))
+	buttons.add_child(_make_button("保存设置", _on_save))
 	buttons.add_child(_make_button("暂存设置", _on_stash))
 	buttons.add_child(_make_button("读取设置", _on_load))
 
@@ -167,6 +169,29 @@ func _draw_canvas() -> void:
 		Color(0.65, 0.85, 1.0, 0.8), false, 2.0)
 
 
+## 每画一笔压一份画布快照（最多 50 步）
+func _push_undo() -> void:
+	_undo_stack.append(canvas_image.duplicate())
+	while _undo_stack.size() > UNDO_LIMIT:
+		_undo_stack.pop_front()
+
+
+func debug_undo_depth() -> int:
+	return _undo_stack.size()
+
+
+func debug_undo() -> void:
+	_on_undo()
+
+
+func debug_save() -> void:
+	_on_save()
+
+
+func debug_apply() -> void:
+	_on_apply()
+
+
 func _canvas_cell(local: Vector2) -> Vector2i:
 	return Vector2i(int(floor(local.x / CANVAS_ZOOM)), int(floor(local.y / CANVAS_ZOOM)))
 
@@ -193,6 +218,7 @@ func _paint_at(local: Vector2, erase: bool) -> void:
 	var cell := _canvas_cell(local)
 	if not _in_canvas(cell):
 		return
+	_push_undo()
 	canvas_image.set_pixel(cell.x, cell.y, Color(0, 0, 0, 0) if erase else current_color)
 	_canvas.queue_redraw()
 	canvas_changed.emit()
@@ -242,9 +268,27 @@ func debug_zoom_panel() -> Node:
 	return _zoom_panel
 
 
-func _on_keep() -> void:
+## 保存设置：只把画布写进设置文件，不改变游戏里正在用的准星
+func _on_save() -> void:
+	GameSettings.save_cursor_canvas(canvas_image)
+	_message.text = "已保存（想让它生效请点「应用」）"
+
+
+## 应用：把画布上的光标应用到游戏里（立刻生效）
+func _on_apply() -> void:
 	GameSettings.apply_cursor_canvas(canvas_image)
-	_message.text = "已保存并应用当前光标"
+	_message.text = "已应用到游戏"
+
+
+## 撤回：撤销画布上的上一次绘制/擦除（最多记 50 步）
+func _on_undo() -> void:
+	if _undo_stack.is_empty():
+		_message.text = "没有可撤回的操作"
+		return
+	canvas_image = _undo_stack.pop_back()
+	_canvas.queue_redraw()
+	canvas_changed.emit()
+	_message.text = "已撤回（还能撤回 %d 步）" % _undo_stack.size()
 
 
 ## 暂存设置：先展开命名输入行
@@ -278,7 +322,9 @@ func _refresh() -> void:
 		return
 	var choices := GameSettings.cursor_choices()
 	var index := clampi(GameSettings.cursor_choice_index(), 0, choices.size() - 1)
-	_cursor_label.text = ("v  " if _cursor_expanded else ">  ") + "当前光标：%s" % choices[index]
+	_cursor_label.visible = _cursor_expanded          # 没按「读取设置」时什么都不显示
+	_cursor_list.visible = _cursor_expanded
+	_cursor_label.text = "当前光标：%s" % choices[index]
 	for child in _cursor_list.get_children():
 		child.queue_free()
 	_cursor_list.visible = _cursor_expanded
@@ -312,6 +358,7 @@ func _on_pick_cursor(index: int) -> void:
 # ---------------- 供自检调用 ----------------
 
 func debug_paint(cell: Vector2i, erase: bool = false) -> void:
+	_push_undo()
 	canvas_image.set_pixel(cell.x, cell.y, Color(0, 0, 0, 0) if erase else current_color)
 	_canvas.queue_redraw()
 
@@ -326,7 +373,7 @@ func debug_pick_color(index: int) -> void:
 
 
 func debug_keep() -> void:
-	_on_keep()
+	_on_save()
 
 
 func debug_stash(preset_name: String) -> bool:

@@ -29,6 +29,7 @@ const CUSTOM_FONT: Font = null
 var _button_bar: VBoxContainer = null
 ## 标题页按钮列表：支持 W/S 上下选择 + E 确认（用户要求）
 var _buttons: Array[Button] = []
+var _hover_index := -1
 var _settings_panel = null
 
 const TITLE_TEXT := "唯时代尔"
@@ -114,6 +115,7 @@ func _build_ui() -> void:
 
 	#让键盘 / 手柄也能直接开始:内置动作 ui_accept 回车，空格 会触发当前聚焦的按钮
 	run_button.grab_focus()
+	_refresh_button_marks()
 	_check_title_layout.call_deferred()
 
 
@@ -143,6 +145,7 @@ func _move_button_focus(step: int) -> void:
 			break
 	index = wrapi(index + step, 0, _buttons.size())
 	_buttons[index].grab_focus()
+	_refresh_button_marks()
 
 
 func _activate_focused_button() -> void:
@@ -230,12 +233,38 @@ func _make_button(text: String, node_name: String) -> Button:
 	var button := Button.new()
 	button.name = node_name
 	button.text = text
+	button.set_meta("base_text", text)
 	button.custom_minimum_size = Vector2(200, 42)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.add_theme_font_size_override("font_size", FONT_SIZE_BODY)
+	# 去掉按钮自带的边框/底色/焦点虚线框：选中效果统一用「> + 黄字」
+	var empty := StyleBoxEmpty.new()
+	for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state, empty)
+	button.add_theme_color_override("font_color", COLOR_TEXT)
+	button.add_theme_color_override("font_hover_color", COLOR_TITLE)
+	button.add_theme_color_override("font_focus_color", COLOR_TITLE)
+	button.add_theme_color_override("font_pressed_color", COLOR_TITLE)
+	button.mouse_entered.connect(func() -> void:
+		_hover_index = _buttons.find(button)
+		button.grab_focus())
+	button.mouse_exited.connect(func() -> void:
+		if _hover_index == _buttons.find(button):
+			_hover_index = -1
+			_refresh_button_marks())
 	if CUSTOM_FONT != null:
 		button.add_theme_font_override("font", CUSTOM_FONT)
 	return button
+
+
+## 选中项统一显示成「> 文字」+ 黄字（键盘 W/S 与鼠标悬停同一套）
+func _refresh_button_marks() -> void:
+	for index in range(_buttons.size()):
+		var button := _buttons[index]
+		var base_text := String(button.get_meta("base_text", button.text))
+		var chosen := button.has_focus()
+		button.text = ("> " + base_text) if chosen else ("   " + base_text)
+		button.add_theme_color_override("font_color", COLOR_TITLE if chosen else COLOR_TEXT)
 
 
 #占位用的空白控件，用来拉开行距

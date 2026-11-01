@@ -8,7 +8,8 @@ signal edited
 const CANVAS_SIZE := 32
 const ZOOM := 16                       ## 32x32 -> 512x512
 const SWATCH := 26.0
-const VISIBLE_SWATCHES := 4            ## 一横排显示 4 个，超出用滚轮滚
+const PALETTE_COLUMNS := 4              ## 每行 4 个色块
+const PALETTE_ROWS := 4                 ## 一屏 4 行（16 个），超出用滚轮滚
 const COLOR_TEXT := Color(0.88, 0.89, 0.92)
 const COLOR_HINT := Color(0.60, 0.64, 0.68)
 
@@ -103,7 +104,7 @@ func _build_ui() -> void:
 
 	# 一横排调色板：固定露 4 个，鼠标滚轮一次滚一格（自己画，不用 ScrollContainer）
 	_palette_strip = Control.new()
-	_palette_strip.custom_minimum_size = Vector2(SWATCH * VISIBLE_SWATCHES, SWATCH)
+	_palette_strip.custom_minimum_size = Vector2(SWATCH * PALETTE_COLUMNS, SWATCH * PALETTE_ROWS)
 	_palette_strip.mouse_filter = Control.MOUSE_FILTER_STOP
 	_palette_strip.draw.connect(_draw_palette)
 	_palette_strip.gui_input.connect(_on_palette_input)
@@ -124,13 +125,14 @@ func _build_ui() -> void:
 func _draw_palette() -> void:
 	if _palette_strip == null:
 		return
-	_palette_strip.draw_rect(Rect2(0, 0, SWATCH * VISIBLE_SWATCHES, SWATCH),
+	_palette_strip.draw_rect(Rect2(0, 0, SWATCH * PALETTE_COLUMNS, SWATCH * PALETTE_ROWS),
 		Color(0.10, 0.10, 0.12))
-	for slot in range(VISIBLE_SWATCHES):
-		var index := _palette_offset + slot
+	for slot in range(PALETTE_COLUMNS * PALETTE_ROWS):
+		var index := _palette_offset * PALETTE_COLUMNS + slot
 		if index >= palette_colors.size():
 			break
-		var rect := Rect2(slot * SWATCH, 0, SWATCH - 2.0, SWATCH - 2.0)
+		var rect := Rect2((slot % PALETTE_COLUMNS) * SWATCH, (slot / PALETTE_COLUMNS) * SWATCH,
+			SWATCH - 2.0, SWATCH - 2.0)
 		_palette_strip.draw_rect(rect, palette_colors[index])
 		if palette_colors[index].is_equal_approx(current_color):
 			_palette_strip.draw_rect(rect, Color(1, 1, 1, 1), false, 2.0)
@@ -141,15 +143,17 @@ func _on_palette_input(event: InputEvent) -> void:
 	var mouse := event as InputEventMouseButton
 	if mouse == null or not mouse.pressed:
 		return
+	var max_row := maxi(int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS))) - PALETTE_ROWS, 0)
 	if mouse.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-		_palette_offset = clampi(_palette_offset + 1, 0, maxi(palette_colors.size() - VISIBLE_SWATCHES, 0))
+		_palette_offset = clampi(_palette_offset + 1, 0, max_row)      # 一次滚一行
 		_palette_strip.queue_redraw()
 	elif mouse.button_index == MOUSE_BUTTON_WHEEL_UP:
-		_palette_offset = clampi(_palette_offset - 1, 0, maxi(palette_colors.size() - VISIBLE_SWATCHES, 0))
+		_palette_offset = clampi(_palette_offset - 1, 0, max_row)
 		_palette_strip.queue_redraw()
 	elif mouse.button_index == MOUSE_BUTTON_LEFT:
-		var slot := int(floor(mouse.position.x / SWATCH))
-		var index := _palette_offset + slot
+		var col := int(floor(mouse.position.x / SWATCH))
+		var row := int(floor(mouse.position.y / SWATCH))
+		var index := _palette_offset * PALETTE_COLUMNS + row * PALETTE_COLUMNS + col
 		if index >= 0 and index < palette_colors.size():
 			current_color = palette_colors[index]
 			_palette_strip.queue_redraw()
@@ -230,7 +234,11 @@ func debug_swatch_count() -> int:
 
 
 func debug_visible_swatches() -> int:
-	return VISIBLE_SWATCHES
+	return PALETTE_COLUMNS * PALETTE_ROWS
+
+
+func debug_palette_columns() -> int:
+	return PALETTE_COLUMNS
 
 
 func debug_palette_offset() -> int:

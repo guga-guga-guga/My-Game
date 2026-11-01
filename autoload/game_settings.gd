@@ -144,7 +144,14 @@ func cursor_canvas_image() -> Image:
 	return image
 
 
-## 「保持设置」：把画布存成当前光标并立刻生效
+## 「保存设置」：只写进设置文件，不改变正在用的光标
+func save_cursor_canvas(image: Image) -> void:
+	custom_cursor_b64 = Marshalls.raw_to_base64(image.get_data())
+	save_settings()
+	changed.emit()
+
+
+## 「应用」：把画布存成当前光标并立刻生效
 func apply_cursor_canvas(image: Image) -> void:
 	custom_cursor_b64 = Marshalls.raw_to_base64(image.get_data())
 	cursor_kind = CURSOR_KIND_CUSTOM
