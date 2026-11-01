@@ -86,9 +86,19 @@ func _build_ui() -> void:
 	var canvas_side := VBoxContainer.new()
 	canvas_side.add_theme_constant_override("separation", 8)
 	top.add_child(canvas_side)
+	canvas_side.custom_minimum_size = Vector2(96.0, CANVAS_SIZE * CANVAS_ZOOM)
 	var zoom_button := _make_button("放大", _on_zoom)
 	zoom_button.custom_minimum_size = Vector2(90.0, 34.0)
 	canvas_side.add_child(zoom_button)
+	var undo_button := _make_button("撤回", _on_undo)
+	undo_button.custom_minimum_size = Vector2(90.0, 34.0)
+	canvas_side.add_child(undo_button)
+	var side_filler := Control.new()                 # 把「应用」顶到最下面，和画布底边齐平
+	side_filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	canvas_side.add_child(side_filler)
+	var apply_button := _make_button("应用", _on_apply)
+	apply_button.custom_minimum_size = Vector2(90.0, 34.0)
+	canvas_side.add_child(apply_button)
 
 	_palette = Control.new()
 	_palette.custom_minimum_size = Vector2(PALETTE_COLUMNS * SWATCH_SIZE, 12.0 * SWATCH_SIZE)
