@@ -8,8 +8,8 @@ signal edited
 const CANVAS_SIZE := 32
 const ZOOM := 16                       ## 32x32 -> 512x512
 const SWATCH := 26.0
-const PALETTE_COLUMNS := 4              ## 每行 4 个色块
-const PALETTE_ROWS := 4                 ## 一屏 4 行（16 个），超出用滚轮滚
+const PALETTE_COLUMNS := 4
+const PALETTE_WIDTH := 120.0            ## 调色板总宽度（4 列）
 const PIXEL_FONT: Font = preload("res://resources/font/IPix.ttf")
 const COLOR_TEXT := Color(0.88, 0.89, 0.92)
 const COLOR_HINT := Color(0.60, 0.64, 0.68)
@@ -106,7 +106,9 @@ func _build_ui() -> void:
 
 	# 一横排调色板：固定露 4 个，鼠标滚轮一次滚一格（自己画，不用 ScrollContainer）
 	_palette_strip = Control.new()
-	_palette_strip.custom_minimum_size = Vector2(SWATCH * PALETTE_COLUMNS, SWATCH * PALETTE_ROWS)
+	# 顶边与画布齐平、底边与画布底部齐平
+	_palette_strip.custom_minimum_size = Vector2(PALETTE_WIDTH, CANVAS_SIZE * ZOOM)
+	_palette_strip.size_flags_vertical = Control.SIZE_FILL
 	_palette_strip.mouse_filter = Control.MOUSE_FILTER_STOP
 	_palette_strip.draw.connect(_draw_palette)
 	_palette_strip.gui_input.connect(_on_palette_input)
@@ -125,17 +127,21 @@ func _build_ui() -> void:
 
 
 ## 画一横排（只画当前可见的 4 个）
+## 4 列 × N 行：N 由颜色数量决定，格子高度按画布高度均分，palette.png 的颜色全部显示出来
+func _swatch_size() -> Vector2:
+	var rows := maxi(int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS))), 1)
+	return Vector2(PALETTE_WIDTH / float(PALETTE_COLUMNS), float(CANVAS_SIZE * ZOOM) / float(rows))
+
+
 func _draw_palette() -> void:
 	if _palette_strip == null:
 		return
-	_palette_strip.draw_rect(Rect2(0, 0, SWATCH * PALETTE_COLUMNS, SWATCH * PALETTE_ROWS),
-		Color(0.10, 0.10, 0.12))
-	for slot in range(PALETTE_COLUMNS * PALETTE_ROWS):
-		var index := _palette_offset * PALETTE_COLUMNS + slot
-		if index >= palette_colors.size():
-			break
-		var rect := Rect2((slot % PALETTE_COLUMNS) * SWATCH, (slot / PALETTE_COLUMNS) * SWATCH,
-			SWATCH - 2.0, SWATCH - 2.0)
+	_palette_strip.draw_rect(Rect2(0, 0, PALETTE_WIDTH, CANVAS_SIZE * ZOOM), Color(0.10, 0.10, 0.12))
+	var cell := _swatch_size()
+	for index in range(palette_colors.size()):
+		var col := index % PALETTE_COLUMNS
+		var row := index / PALETTE_COLUMNS
+		var rect := Rect2(col * cell.x, row * cell.y, cell.x - 1.0, cell.y - 1.0)
 		_palette_strip.draw_rect(rect, palette_colors[index])
 		if palette_colors[index].is_equal_approx(current_color):
 			_palette_strip.draw_rect(rect, Color(1, 1, 1, 1), false, 2.0)
@@ -146,7 +152,7 @@ func _on_palette_input(event: InputEvent) -> void:
 	var mouse := event as InputEventMouseButton
 	if mouse == null or not mouse.pressed:
 		return
-	var max_row := maxi(int(ceil(float(palette_colors.size()) / float(PALETTE_COLUMNS))) - PALETTE_ROWS, 0)
+	var max_row := 0            # 颜色全部一屏显示完，不需要滚动了
 	if mouse.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 		_palette_offset = clampi(_palette_offset + 1, 0, max_row)      # 一次滚一行
 		_palette_strip.queue_redraw()
@@ -154,9 +160,10 @@ func _on_palette_input(event: InputEvent) -> void:
 		_palette_offset = clampi(_palette_offset - 1, 0, max_row)
 		_palette_strip.queue_redraw()
 	elif mouse.button_index == MOUSE_BUTTON_LEFT:
-		var col := int(floor(mouse.position.x / SWATCH))
-		var row := int(floor(mouse.position.y / SWATCH))
-		var index := _palette_offset * PALETTE_COLUMNS + row * PALETTE_COLUMNS + col
+		var cell := _swatch_size()
+		var col := int(floor(mouse.position.x / cell.x))
+		var row := int(floor(mouse.position.y / cell.y))
+		var index := row * PALETTE_COLUMNS + col
 		if index >= 0 and index < palette_colors.size():
 			current_color = palette_colors[index]
 			_palette_strip.queue_redraw()
@@ -237,7 +244,7 @@ func debug_swatch_count() -> int:
 
 
 func debug_visible_swatches() -> int:
-	return PALETTE_COLUMNS * PALETTE_ROWS
+	return palette_colors.size()
 
 
 func debug_palette_columns() -> int:
