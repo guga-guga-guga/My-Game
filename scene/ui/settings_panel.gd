@@ -42,11 +42,29 @@ var _expanded := false
 var _expand_selected := 0
 
 
+var _scrollbar_idle := 0.0             ## 滚动条闲置计时（2 秒后自动隐藏）
+var _scrollbar_last_value := 0.0
+
 func _ready() -> void:
 	layer = 40
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_ui()
 	visible = false
+
+
+## 滚动条：滚动过就显示，2 秒没动就藏起来（内容本来就不用滚时也不显示）
+func _update_scrollbar_visibility(delta: float) -> void:
+	if _scroll == null or not _open:
+		return
+	var bar := _scroll.get_v_scroll_bar()
+	if bar == null:
+		return
+	if bar.value != _scrollbar_last_value:
+		_scrollbar_last_value = bar.value
+		_scrollbar_idle = 0.0
+	else:
+		_scrollbar_idle += delta
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if _scrollbar_idle < 2.0 		else ScrollContainer.SCROLL_MODE_SHOW_NEVER
 
 
 func is_open() -> bool:
@@ -203,7 +221,9 @@ func _make_click_label(parent: Node, text: String, on_click: Callable) -> Label:
 # ---------------- 刷新 ----------------
 
 func _refresh() -> void:
-	_resolution_label.text = ("v  " if _expanded else ">  ") + GameSettings.display_text()
+	# 「> 」只表示选中；展开状态用行尾的 [展开]/[收起] 表示，避免两个箭头混在一起
+	var mark := ">  " if _selected == 0 else "   "
+	_resolution_label.text = mark + GameSettings.display_text() + ("   [收起]" if _expanded else "   [展开]")
 	_resolution_label.add_theme_color_override("font_color",
 		COLOR_SELECTED if _selected == 0 else COLOR_TEXT)
 	_volume_label.text = "%d%%" % GameSettings.volume_percent
