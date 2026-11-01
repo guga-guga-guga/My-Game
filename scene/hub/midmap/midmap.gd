@@ -371,7 +371,18 @@ func _setup_dialogue() -> void:
 	_shop.closed.connect(_on_shop_closed)
 
 
+## 鼠标准星：中间地图也用游戏内光标（暂停/商店/对话/汇报时恢复系统指针）
+func _update_aim_cursor() -> void:
+	if _player == null or not is_instance_valid(_player):
+		return
+	if not _player.has_method("set_aim_cursor_active"):
+		return
+	var active: bool = GameSettings.is_mouse_shoot() and not get_tree().paused and not _is_ui_open() and (_pause_menu == null or not _pause_menu.is_open())
+	_player.set_aim_cursor_active(active)
+
+
 func _physics_process(delta: float) -> void:
+	_update_aim_cursor()
 	if _interact_lock > 0.0:
 		_interact_lock -= delta
 	if _pause_menu != null and _pause_menu.is_open():
@@ -480,6 +491,8 @@ func _setup_pause_menu() -> void:
 	if not GameSettings.window_focus_lost.is_connected(_on_window_focus_lost):
 		GameSettings.window_focus_lost.connect(_on_window_focus_lost)
 	_pause_menu.quit_to_title_requested.connect(_on_quit_to_title_requested)
+	_pause_menu.opened.connect(_update_aim_cursor)
+	_pause_menu.closed.connect(_update_aim_cursor)
 
 
 func _on_quit_to_title_requested() -> void:
@@ -521,6 +534,7 @@ func _is_ui_open() -> bool:
 
 
 func _sync_player_lock() -> void:
+	_update_aim_cursor()
 	if _player != null:
 		_player.set_physics_process(not _is_ui_open())
 
