@@ -101,7 +101,10 @@ func _build_ui() -> void:
 	canvas_side.add_child(apply_button)
 
 	_palette = Control.new()
-	_palette.custom_minimum_size = Vector2(PALETTE_COLUMNS * SWATCH_SIZE, 12.0 * SWATCH_SIZE)
+	# 调色板从画布顶部齐平开始，一直延伸到画布底部（高度等于画布高度）
+	var canvas_px := CANVAS_SIZE * CANVAS_ZOOM
+	_palette.custom_minimum_size = Vector2(PALETTE_COLUMNS * SWATCH_SIZE, canvas_px)
+	_palette.size_flags_vertical = Control.SIZE_FILL
 	_palette.mouse_filter = Control.MOUSE_FILTER_STOP
 	_palette.draw.connect(_draw_palette)
 	_palette.gui_input.connect(_on_palette_input)
@@ -242,7 +245,10 @@ func _paint_at(local: Vector2, erase: bool) -> void:
 # ---------------- 调色板 ----------------
 
 func _draw_palette() -> void:
-	for index in range(palette_colors.size()):
+	var max_rows := int(float(CANVAS_SIZE * CANVAS_ZOOM) / SWATCH_SIZE)   # 和画布一样高能放几行
+	var capacity := PALETTE_COLUMNS * max_rows
+	var count := mini(palette_colors.size(), capacity)
+	for index in range(count):
 		var col := index % PALETTE_COLUMNS
 		var row := index / PALETTE_COLUMNS
 		var rect := Rect2(col * SWATCH_SIZE, row * SWATCH_SIZE, SWATCH_SIZE, SWATCH_SIZE)
