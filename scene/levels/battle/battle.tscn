@@ -6,7 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://cwcyj4ebct83d" path="res://scene/entities/player/player.tscn" id="3_33cqm"]
 [ext_resource type="Texture2D" uid="uid://ca65d27crgaol" path="res://resources/texture/道具ui.png" id="5_xlg7c"]
 [ext_resource type="Texture2D" path="res://resources/texture/门动画.png" id="9_door"]
-[ext_resource type="FontFile" uid="uid://dh6kmwb26e8g0" path="res://resources/font/IPix.ttf" id="6_qpk70"]
+[ext_resource type="FontFile" uid="uid://bnr5k7q4us2i8" path="res://resources/font/IPix.ttf" id="6_qpk70"]
 [ext_resource type="AudioStream" uid="uid://cwp5a7knt47hg" path="res://resources/audio/1-28 Journey of the Prairie King (The Outlaw).mp3" id="7_17rxn"]
 [ext_resource type="AudioStream" uid="uid://bkbmrylashevh" path="res://resources/audio/Cowboy_Secret.wav" id="7_ll5lq"]
 

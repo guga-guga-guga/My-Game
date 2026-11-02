@@ -203,7 +203,7 @@ func _execute_pending_skill() -> void:
 	_set_flash(0.0)
 	var skill := _pending_skill
 	if debug_fast_skills:
-		print("[Boss] 释放技能 %s（锁定落点 %s）" % [skill, str(_locked_target.round())])
+		DebugLog.log_line("[Boss] 释放技能 %s（锁定落点 %s）" % [skill, str(_locked_target.round())])
 	if skill == "minions":
 		_throw_minions()
 		_enter_recover()
@@ -221,7 +221,7 @@ func _execute_pending_skill() -> void:
 		_invulnerable = true                               # 冲刺全程免伤（用户要求）
 		_set_flash(1.0)
 		_set_outline_intensity(1.0)
-		print("[Boss] 冲撞开始（方向 %s）" % str(_charge_direction.round()))
+		DebugLog.log_line("[Boss] 冲撞开始（方向 %s）" % str(_charge_direction.round()))
 	else:
 		_enter_recover()
 	_clear_telegraphs()
@@ -238,7 +238,7 @@ func _throw_minions() -> void:
 		_throw_enemy(minion, _cell_center(cell), throw_duration + 0.08 * float(index), false)
 		thrown_minions += 1
 	_summon_cooldown_left = summon_cooldown / (4.0 if debug_fast_skills else 1.0)
-	print("[Boss] 抛出 %d 只小怪（累计 %d，下次召唤冷却 %.0f 秒）" % [count, thrown_minions, _summon_cooldown_left])
+	DebugLog.log_line("[Boss] 抛出 %d 只小怪（累计 %d，下次召唤冷却 %.0f 秒）" % [count, thrown_minions, _summon_cooldown_left])
 
 ## 技能 B：抛出 1 只自爆怪，落点 = Boss 停止移动时锁定的玩家位置，落地立即引爆。
 ## ⚠️ 注意：自爆怪的爆炸会伤害"玩家和敌人"，所以 **Boss 也会被自己的自爆怪炸到**。
@@ -250,7 +250,7 @@ func _throw_bomb() -> void:
 	var landing := _snap_to_walkable(_locked_target)
 	_throw_enemy(bomb, landing, bomb_throw_duration, true)
 	thrown_bombs += 1
-	print("[Boss] 抛出自爆怪 → 落点 %s（累计 %d）" % [str(landing.round()), thrown_bombs])
+	DebugLog.log_line("[Boss] 抛出自爆怪 → 落点 %s（累计 %d）" % [str(landing.round()), thrown_bombs])
 
 func _spawn_minion(minion_config: EnemyConfig) -> Enemy:
 	if minion_config == null:
@@ -291,10 +291,10 @@ func _on_throw_finished(node: Enemy, target_position: Vector2, detonate_on_land:
 	node.global_position = target_position
 	if detonate_on_land:
 		node.explode_now()
-		print("[Boss自检] 自爆怪已在落点引爆（%s）" % str(target_position.round()))
+		DebugLog.log_line("[Boss自检] 自爆怪已在落点引爆（%s）" % str(target_position.round()))
 	else:
 		node.set_airborne(false)
-		print("[Boss自检] 小怪落地并恢复 AI（%s，落点可通行=%s）" % [
+		DebugLog.log_line("[Boss自检] 小怪落地并恢复 AI（%s，落点可通行=%s）" % [
 			str(target_position.round()), str(_is_walkable(_world_to_cell(target_position)))])
 
 func _enter_recover() -> void:

@@ -99,7 +99,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_shoot_cd = maxf(_shoot_cd - delta, 0.0)
 	if _shoot_cd > 0.0:
-		print("[DBG] cd>0 ", _shoot_cd)
+		DebugLog.log_line("[DBG] cd>0 %s" % str(_shoot_cd))
 		return
 	var target := _chase_target
 	if target == null or not is_instance_valid(target) or target.get("is_dead") == true:
@@ -107,9 +107,9 @@ func _physics_process(delta: float) -> void:
 	if global_position.distance_to(target.global_position) > SHOOT_RANGE:
 		return
 	if _has_wall_between(global_position, target.global_position):
-		print("[DBG] blocked by wall, return")
+		DebugLog.log_line("[DBG] blocked by wall, return")
 		return                                   # 隔着墙不开枪（子弹不该穿墙）
-	print("[DBG] fire! cd=%.3f dist=%.1f los=%s" % [_shoot_cd, global_position.distance_to(target.global_position), str(_has_wall_between(global_position, target.global_position))])
+	DebugLog.log_line("[DBG] fire! cd=%.3f dist=%.1f los=%s" % [_shoot_cd, global_position.distance_to(target.global_position), str(_has_wall_between(global_position, target.global_position))])
 	_shoot_cd = SHOOT_INTERVAL
 	_fire_at(target.global_position)
 

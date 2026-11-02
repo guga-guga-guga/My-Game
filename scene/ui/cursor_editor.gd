@@ -275,7 +275,8 @@ func _draw_palette() -> void:
 	var count := mini(palette_colors.size(), capacity)
 	for index in range(count):
 		var col := index % PALETTE_COLUMNS
-		var row := index / PALETTE_COLUMNS
+		@warning_ignore("integer_division")
+		var row := index / PALETTE_COLUMNS          # 取"第几行"，整数除法是故意的
 		var rect := Rect2(col * SWATCH_SIZE, row * SWATCH_SIZE, SWATCH_SIZE, SWATCH_SIZE)
 		_palette.draw_rect(rect, palette_colors[index])
 		if palette_colors[index].is_equal_approx(current_color):

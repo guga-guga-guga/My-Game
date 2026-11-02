@@ -19,6 +19,7 @@ const MAIN_OPTIONS: Array[Dictionary] = [
 	{"id": "push", "text": "调试推车关", "hint": "第 3 层推车关：大路网 + 房间 + 推箱子"},
 	{"id": "maze", "text": "调试迷宫关", "hint": "第 3 层迷宫关：60 秒指引 + 岩浆漫延"},
 	{"id": "defend", "text": "调试守护关", "hint": "第 6 层守护关：守护对象 5 血，撑满 120 秒"},
+	{"id": "classic", "text": "经典模式", "hint": "老的经典模式场景（标题页已不显示这个入口）"},
 	{"id": "cancel", "text": "取消", "hint": "关掉这个窗口"},
 ]
 
@@ -137,8 +138,8 @@ func _build_ui() -> void:
 		boss_row.mouse_filter = Control.MOUSE_FILTER_STOP
 		boss_row.gui_input.connect(_on_boss_row_gui_input.bind(index))
 		boss_row.mouse_entered.connect(func() -> void:
-			if _boss_selected != index:
-				_boss_selected = index
+			if _level == 2 and _selected != index:
+				_selected = index
 				_refresh())
 		column.add_child(boss_row)
 		_boss_rows.append(boss_row)

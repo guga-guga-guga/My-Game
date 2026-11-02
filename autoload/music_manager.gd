@@ -120,7 +120,7 @@ func play(path: String) -> void:
 	if outgoing.playing:
 		_tween.tween_property(outgoing, "volume_db", SILENT_DB, FADE_TIME)
 		_tween.chain().tween_callback(outgoing.stop)
-	print("[Music] 播放: %s（交叉淡出 %.1fs）" % [path.get_file(), FADE_TIME])
+	DebugLog.log_line("[Music] 播放: %s（交叉淡出 %.1fs）" % [path.get_file(), FADE_TIME])
 	track_changed.emit(path)
 
 
@@ -196,11 +196,11 @@ func _process(_delta: float) -> void:
 		return
 	_site_visible = visible
 	if visible:
-		print("[Music] 站点重新显示游戏：解冻 + 接回音乐")
+		DebugLog.log_line("[Music] 站点重新显示游戏：解冻 + 接回音乐")
 		_set_frozen_by_site(false)
 		_resume_music("站点显示")
 	else:
-		print("[Music] 站点隐藏了游戏：冻结 + 停止音乐")
+		DebugLog.log_line("[Music] 站点隐藏了游戏：冻结 + 停止音乐")
 		_stop_and_remember("站点隐藏")
 		_set_frozen_by_site(true)
 
@@ -226,7 +226,7 @@ func _stop_and_remember(why: String) -> void:
 	var resume_path := _current
 	stop()                                  # stop() 会清掉标记，所以要在它之后赋值
 	_resume_after_focus = resume_path
-	print("[Music] %s：停止音乐（%s）" % [why, resume_path.get_file()])
+	DebugLog.log_line("[Music] %s：停止音乐（%s）" % [why, resume_path.get_file()])
 
 
 func _resume_music(why: String) -> void:
@@ -235,5 +235,5 @@ func _resume_music(why: String) -> void:
 	var path := _resume_after_focus
 	_resume_after_focus = ""
 	play(path)
-	print("[Music] %s：接回 %s" % [why, path.get_file()])
+	DebugLog.log_line("[Music] %s：接回 %s" % [why, path.get_file()])
 

@@ -196,8 +196,8 @@ func cursor_choices() -> Array[String]:
 	var out: Array[String] = ["默认倒三角"]
 	var names := saved_cursors.keys()
 	names.sort()
-	for name in names:
-		out.append(String(name))
+	for preset_key in names:
+		out.append(String(preset_key))
 	return out
 
 
@@ -262,6 +262,8 @@ func apply_window() -> void:
 		mini(size.x, maxi(usable.size.x - decoration.x, 320)),
 		mini(size.y, maxi(usable.size.y - decoration.y, 240)))
 	DisplayServer.window_set_size(fit)
+	# 居中算半个像素没有意义，这里就是故意整数除法（向下取整）
+	@warning_ignore("integer_division")
 	DisplayServer.window_set_position(Vector2i(
 		usable.position.x + maxi((usable.size.x - (fit.x + decoration.x)) / 2, 0),
 		usable.position.y + maxi((usable.size.y - (fit.y + decoration.y)) / 2, 0)))

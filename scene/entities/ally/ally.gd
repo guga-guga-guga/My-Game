@@ -149,7 +149,7 @@ func set_state(new_state: String) -> void:
 	_repath_left = 0.0
 	_guard_repick_left = 0.0
 	state_changed.emit(state)
-	print("[Ally] 切换状态 -> %s" % state_name())
+	DebugLog.log_line("[Ally] 切换状态 -> %s" % state_name())
 
 
 func state_name() -> String:
@@ -483,7 +483,7 @@ func heal_one() -> bool:
 		return false
 	current_health = mini(current_health + 1, MAX_HEALTH)
 	health_changed.emit(current_health, MAX_HEALTH)
-	print("[Ally] 由玩家满血道具恢复 -> %d/%d" % [current_health, MAX_HEALTH])
+	DebugLog.log_line("[Ally] 由玩家满血道具恢复 -> %d/%d" % [current_health, MAX_HEALTH])
 	return true
 
 
@@ -499,7 +499,7 @@ func apply_pickup(config) -> bool:
 	if config.pickup_type == PickupConfig.PickupType.HEAL:
 		current_health = mini(current_health + 1, MAX_HEALTH)
 		health_changed.emit(current_health, MAX_HEALTH)
-		print("[Ally] 吃到恢复道具 -> %d/%d" % [current_health, MAX_HEALTH])
+		DebugLog.log_line("[Ally] 吃到恢复道具 -> %d/%d" % [current_health, MAX_HEALTH])
 		return true
 	var applied := false
 	if not is_equal_approx(config.move_speed_multiplier, 1.0):
@@ -511,7 +511,7 @@ func apply_pickup(config) -> bool:
 		_fire_buff_left = maxf(config.duration, 0.0)
 		applied = true
 	if applied:
-		print("[Ally] 吃到道具 %s: 移速 x%.2f 射速 x%.2f（%.0f 秒）" % [
+		DebugLog.log_line("[Ally] 吃到道具 %s: 移速 x%.2f 射速 x%.2f（%.0f 秒）" % [
 			String(config.display_name), _speed_buff_mult, _fire_buff_mult, maxf(config.duration, 0.0)])
 	return applied
 
@@ -554,7 +554,7 @@ func _die() -> void:
 	is_dead = true
 	velocity = Vector2.ZERO
 	died.emit()
-	print("[Ally] 队友被击倒")
+	DebugLog.log_line("[Ally] 队友被击倒")
 	queue_free()
 
 

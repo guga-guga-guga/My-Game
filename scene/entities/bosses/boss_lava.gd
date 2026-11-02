@@ -156,7 +156,7 @@ func _lava_throw_bombers() -> void:
 		var tween := create_tween()
 		tween.tween_property(bomber, "global_position", land, flight)
 		tween.tween_callback(_lava_explode_at.bind(bomber, land))
-	print("[LavaBoss] 技能一：朝周围丢出 %d 只自爆敌人" % count)
+	DebugLog.log_line("[LavaBoss] 技能一：朝周围丢出 %d 只自爆敌人" % count)
 
 ## 自爆敌人落地：立刻爆炸 + 砸出 3x3 暂时岩浆
 func _lava_explode_at(bomber: Node, land: Vector2) -> void:
@@ -212,7 +212,7 @@ func _lava_jump_smash() -> void:
 			if _lava_battle.has_method("temp_lava"):
 				_lava_battle.temp_lava(_lava_battle.cells_around_cell(center), -1.0, true)
 	)
-	print("[LavaBoss] 技能二：蓄力压缩 -> 抛物线跳砸 -> 砸出 5x5 岩浆")
+	DebugLog.log_line("[LavaBoss] 技能二：蓄力压缩 -> 抛物线跳砸 -> 砸出 5x5 岩浆")
 
 ## 中断正在进行的跳砸（钻地 / 死亡时调用）：腾空补间、提示圈、压扁的体型全部还原
 func _lava_cancel_jump() -> void:
@@ -237,7 +237,7 @@ func _update_lava_lock_spawn(delta: float) -> void:
 	if _lava_battle != null and _lava_battle.has_method("spawn_bomber_at_lava"):
 		_lava_battle.spawn_bomber_at_lava(_lava_burrow_cell)
 		if _lava_spawn_left == 0:
-			print("[LavaBoss] 锁血期间的自爆兵已全部爬出")
+			DebugLog.log_line("[LavaBoss] 锁血期间的自爆兵已全部爬出")
 
 ## 技能三：半血无敌时钻地消失 + 脚下变岩浆 + 从岩浆里放出 20 只自爆敌人
 func _lava_burrow() -> void:
@@ -257,7 +257,7 @@ func _lava_burrow() -> void:
 	# 锁血 10 秒内分批从岩浆里放出 20 只自爆兵（不是从红门）
 	_lava_spawn_left = lava_lock_bomber_count
 	_lava_spawn_tick = 0.0
-	print("[LavaBoss] 技能三：钻入地下，%d 秒内从岩浆里爬出 %d 只自爆敌人" % [
+	DebugLog.log_line("[LavaBoss] 技能三：钻入地下，%d 秒内从岩浆里爬出 %d 只自爆敌人" % [
 		int(HP_LOCK_TIME), lava_lock_bomber_count])
 
 func _lava_unburrow() -> void:
@@ -270,7 +270,7 @@ func _lava_unburrow() -> void:
 	set_ai_suspended(false)
 	if _lava_burrow_cell != Vector2i(-1, -1):
 		global_position = Vector2(_lava_burrow_cell) * 16.0 + Vector2(8.0, 8.0)
-	print("[LavaBoss] 技能三结束：从岩浆里钻出")
+	DebugLog.log_line("[LavaBoss] 技能三结束：从岩浆里钻出")
 
 
 # ============================ 行为 ============================

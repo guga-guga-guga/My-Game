@@ -140,7 +140,7 @@ func _build_ui() -> void:
 
 
 ## 一行数值：名称 + [-100][-10][-1][+1][+10][+100] + 可输入的数值框
-func _build_row(index: int, def: Dictionary) -> void:
+func _build_row(_index: int, def: Dictionary) -> void:
 	var key := String(def["key"])
 	var row := HBoxContainer.new()
 	row.name = "Row_%s" % key
@@ -255,7 +255,7 @@ func debug_advance_floor() -> int:
 
 ## 点「进入下一层」：层数 +1（已是最后一层就停住），然后回中间地图
 func _go_next_floor() -> void:
-	print("[DebugPanel] 调试：进入第 %d 层" % debug_advance_floor())
+	DebugLog.log_line("[DebugPanel] 调试：进入第 %d 层" % debug_advance_floor())
 	close_panel()                            # 先解除暂停，再换场景
 	GameFlow.goto_midmap()
 
@@ -272,7 +272,7 @@ func open_panel() -> void:
 	_reset_hold()
 	_connect_row_hover()
 	_refresh_all()
-	print("[DebugPanel] 已打开（游戏冻结）")
+	DebugLog.log_line("[DebugPanel] 已打开（游戏冻结）")
 
 
 ## 给所有可选行接上鼠标悬停 = 选中（和键盘 W/S 同一套高亮）
@@ -297,7 +297,7 @@ func close_panel() -> void:
 	_root.visible = false
 	_reset_hold()
 	get_tree().paused = _paused_before
-	print("[DebugPanel] 已关闭")
+	DebugLog.log_line("[DebugPanel] 已关闭")
 
 
 func toggle() -> void:
@@ -559,7 +559,7 @@ func _hire_ally() -> void:
 	if battle != null and battle.has_method("debug_hire_ally"):
 		battle.debug_hire_ally()
 	elif not RunState.hire_ally():
-		print("[DebugPanel] 队友已满（最多 %d 个）" % RunState.MAX_ALLIES)
+		DebugLog.log_line("[DebugPanel] 队友已满（最多 %d 个）" % RunState.MAX_ALLIES)
 	_refresh_all()
 
 
@@ -605,33 +605,37 @@ func debug_build_push_level() -> Dictionary:
 func debug_start_level(level_id: String) -> void:
 	match level_id:
 		"ally":
-			print("[DebugPanel] 调试: 进队友关卡（第 1 层普通关 + 1 只队友）")
+			DebugLog.log_line("[DebugPanel] 调试: 进队友关卡（第 1 层普通关 + 1 只队友）")
 			GameFlow.start_battle(debug_build_ally_level())
 		"boss_floor5":
-			print("[DebugPanel] 调试: 进第 5 层 BOSS 关（原/紫随机一只）")
+			DebugLog.log_line("[DebugPanel] 调试: 进第 5 层 BOSS 关（原/紫随机一只）")
 			RunState.reset()
 			RunState.floor_index = 5
 			GameFlow.start_battle({"floor": 5, "node_type": "boss"})
 		"push":
-			print("[DebugPanel] 调试: 进推车关（第 3 层）")
+			DebugLog.log_line("[DebugPanel] 调试: 进推车关（第 3 层）")
 			GameFlow.start_battle(debug_build_push_level())
 		"maze":
-			print("[DebugPanel] 调试: 进迷宫关（第 3 层）")
+			DebugLog.log_line("[DebugPanel] 调试: 进迷宫关（第 3 层）")
 			RunState.reset()
 			RunState.floor_index = 3
 			GameFlow.start_battle({"floor": 3, "node_type": "maze"})
+		"classic":
+			DebugLog.log_line("[DebugPanel] 调试: 进经典模式")
+			RunState.reset()
+			get_tree().change_scene_to_file("res://scene/levels/classic/game.tscn")
 		"defend":
-			print("[DebugPanel] 调试: 进守护关（第 6 层）")
+			DebugLog.log_line("[DebugPanel] 调试: 进守护关（第 6 层）")
 			RunState.reset()
 			RunState.floor_index = 6
 			GameFlow.start_battle({"floor": 6, "node_type": "defend"})
 		"boss_floor15":
-			print("[DebugPanel] 调试: 进第 15 层三波 BOSS 关")
+			DebugLog.log_line("[DebugPanel] 调试: 进第 15 层三波 BOSS 关")
 			RunState.reset()
 			RunState.floor_index = RunState.MAX_FLOOR
 			GameFlow.start_battle({"floor": RunState.MAX_FLOOR, "node_type": "boss"})
 		"boss_floor10":
-			print("[DebugPanel] 调试: 进第 10 层三重 BOSS 关")
+			DebugLog.log_line("[DebugPanel] 调试: 进第 10 层三重 BOSS 关")
 			RunState.reset()
 			RunState.floor_index = RunState.MAX_FLOOR
 			GameFlow.start_battle({"floor": RunState.MAX_FLOOR, "node_type": "boss"})
@@ -843,7 +847,7 @@ func _dismiss_ally(index: int) -> void:
 	var battle := _current_battle()
 	if battle != null and battle.has_method("debug_respawn_allies"):
 		battle.debug_respawn_allies()
-	print("[DebugPanel] 取消雇佣：剩 %d 名队友" % RunState.ally_count())
+	DebugLog.log_line("[DebugPanel] 取消雇佣：剩 %d 名队友" % RunState.ally_count())
 	_refresh_all()
 
 

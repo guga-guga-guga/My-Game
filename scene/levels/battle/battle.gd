@@ -243,8 +243,8 @@ func _ready() -> void:
 	if goal["type"] == LevelGoal.TYPE_PUSH:
 		_apply_push_time_limit()
 		if debug_print:
-			print("[Battle] 推车关地形预览（# 外墙 X 墙 . 地板 D 红门 P 出生点）")
-			print(generator.to_ascii(arena_data))
+			DebugLog.log_line("[Battle] 推车关地形预览（# 外墙 X 墙 . 地板 D 红门 P 出生点）")
+			DebugLog.log_line(generator.to_ascii(arena_data))
 	generator.apply_to_layers($GroundTileMapLayer, $OverlayTileMapLayer, arena_data)
 	generator.create_spawn_markers($EnemySpawnPoints, arena_data)
 	player.global_position = cell_to_world(arena_data["player_spawn"])
@@ -306,13 +306,14 @@ func _ready() -> void:
 
 	_refresh_goal_hud(true)
 	if debug_print:
-		print("[Battle] 目标=%s 条件=%d 限时=%.0f 波次=%d | 场地 %dx%d seed=%d 房间=%d 红门=%d 岩浆=%d格 寻路=%s 玩家出生=%s" % [
+		DebugLog.log_line("[Battle] 目标=%s 条件=%d 限时=%.0f 波次=%d | 场地 %dx%d seed=%d 房间=%d 红门=%d 岩浆=%d格 寻路=%s 玩家出生=%s" % [
 			goal["type"], goal["conditions"].size(), LevelGoal.time_limit(goal), _waves.size(),
 			arena_data["width"], arena_data["height"], arena_data["seed"], arena_data["room_count"],
 			arena_data["doors"].size(), arena_data.get("lava_cells", []).size(),
 			str(EnemyPathfinder.instance != null and EnemyPathfinder.instance.is_usable()),
 			str(arena_data["player_spawn"])])
-	_start_self_check()
+	if OS.is_debug_build():
+		_start_self_check()          # 开发自检只在调试构建里跑，发布版不做这些统计和打印
 
 
 ## M6 平衡：普通敌人血量随层数成长（1 + 0.25*(层-1)），速度/数量不变。
@@ -332,7 +333,7 @@ func _apply_floor_scaling_to_enemy_configs() -> void:
 		summary.append("%d->%d" % [cfg.max_health, copy.max_health])
 	available_enemy_configs = scaled
 	if debug_print:
-		print("[Battle] 敌人血量倍率 x%.2f（第 %d 层）: %s" % [
+		DebugLog.log_line("[Battle] 敌人血量倍率 x%.2f（第 %d 层）: %s" % [
 			mul, maxi(_context_floor(), 1), "  ".join(summary)])
 
 
@@ -366,7 +367,7 @@ func _boss_config_for_floor() -> EnemyConfig:
 	var mult := _boss_hp_multiplier()
 	var cfg := _boss_config_with_mult(mult)
 	if debug_print and not is_equal_approx(mult, 1.0):
-		print("[Battle] 第 %d 层 BOSS 血量 %d -> %d（×%.2f）" % [
+		DebugLog.log_line("[Battle] 第 %d 层 BOSS 血量 %d -> %d（×%.2f）" % [
 			_context_floor(), BossConfig.max_health, cfg.max_health, mult])
 	return cfg
 
@@ -608,7 +609,7 @@ func _spawn_ally_if_hired() -> void:
 			_ally = ally
 	_refresh_ally_hud()
 	if debug_print:
-		print("[Battle] 放出 %d 名队友（名册 %d 个，血量 %s）" % [
+		DebugLog.log_line("[Battle] 放出 %d 名队友（名册 %d 个，血量 %s）" % [
 			_allies.size(), RunState.ally_count(),
 			str(RunState.ally_roster.map(func(e): return int(e.get("health", 0))))])
 
@@ -675,7 +676,7 @@ func _on_player_heal_requested() -> void:
 			_refresh_ally_hud()
 			return
 	if debug_print:
-		print("[Battle] 玩家满血捡到恢复道具：队友都满血/没队友，未生效")
+		DebugLog.log_line("[Battle] 玩家满血捡到恢复道具：队友都满血/没队友，未生效")
 
 
 func _context_floor() -> int:
@@ -799,7 +800,7 @@ func _on_boss_door_spawn() -> void:
 		if _try_spawn_enemy():
 			spawned += 1
 	if spawned > 0 and debug_print:
-		print("[Battle] 红门涌出 %d 只敌人（场上普通敌人 %d/%d）" % [
+		DebugLog.log_line("[Battle] 红门涌出 %d 只敌人（场上普通敌人 %d/%d）" % [
 			spawned, _count_alive_normal_enemies(), boss_level_normal_enemy_cap])
 
 
@@ -847,7 +848,7 @@ func _apply_run_state_to_player() -> void:
 	if not RunState.health_changed.is_connected(_on_run_state_health_changed):
 		RunState.health_changed.connect(_on_run_state_health_changed)
 	if debug_print:
-		print("[Battle] 进场: 生命 %d/%d 子弹伤害 %d 射击间隔 %.3f 金币 %d" % [
+		DebugLog.log_line("[Battle] 进场: 生命 %d/%d 子弹伤害 %d 射击间隔 %.3f 金币 %d" % [
 			player.current_health, player.max_health, RunState.get_player_damage(),
 			player.fire_interval, RunState.gold])
 
@@ -874,7 +875,7 @@ func _on_enemy_died() -> void:
 	if _purple_family_killing:
 		return                    # 紫 BOSS 家族：统一结算（第 5 层 +30 金），不按只算
 	if debug_print:
-		print("[Battle] 击杀 %d 只（本关累计）金币 %d" % [round_kill_count, RunState.gold])
+		DebugLog.log_line("[Battle] 击杀 %d 只（本关累计）金币 %d" % [round_kill_count, RunState.gold])
 	var gain := maxi(gold_per_enemy_kill, 0)
 	RunState.add_gold(gain)
 	_gold_gained += gain
@@ -905,7 +906,7 @@ func _spawn_boss() -> void:
 		boss.boss_defeated.connect(_on_boss_defeated)
 	if not boss.died.is_connected(_on_enemy_died):
 		boss.died.connect(_on_enemy_died)
-	print("[Battle] Boss 已放出: 出生格=%s（玩家在 %s，相距 %.0f 格）" % [
+	DebugLog.log_line("[Battle] Boss 已放出: 出生格=%s（玩家在 %s，相距 %.0f 格）" % [
 		str(spawn_cell), str(arena_data["player_spawn"]),
 		Vector2(spawn_cell).distance_to(Vector2(arena_data["player_spawn"]))])
 	if debug_instant_boss_win:
@@ -1038,14 +1039,14 @@ func _on_boss_defeated() -> void:
 		if enemy_spawn_timer != null:
 			enemy_spawn_timer.stop()
 		if debug_print:
-			print("[Battle] BOSS 全部击败，红门停止刷怪")
+			DebugLog.log_line("[Battle] BOSS 全部击败，红门停止刷怪")
 	var boss_gain := maxi(gold_per_boss_kill, 0)
 	RunState.add_gold(boss_gain)
 	_gold_gained += boss_gain
 
 	# 血条的收起改由 _update_time_bar() 每帧按血量处理（第10层还有第二条，不能在这里一起关）
 	if debug_print:
-		print("[Battle] Boss 已击败, 目标达成判定=%s" % str(LevelGoal.is_satisfied(goal, _goal_state())))
+		DebugLog.log_line("[Battle] Boss 已击败, 目标达成判定=%s" % str(LevelGoal.is_satisfied(goal, _goal_state())))
 
 
 # ---------------- 目标驱动的 HUD 布局（顶部时间条 / 时钟 / 生命值位置） ----------------
@@ -1201,14 +1202,14 @@ func _kill_purple_family(family: int = -1) -> void:
 		RunState.add_gold(gain)
 		_gold_gained += gain
 		if debug_print:
-			print("[Battle] 紫色 BOSS（第 5 层）阵亡：不掉道具，金币 +%d（合计 %d）" % [gain, RunState.gold])
+			DebugLog.log_line("[Battle] 紫色 BOSS（第 5 层）阵亡：不掉道具，金币 +%d（合计 %d）" % [gain, RunState.gold])
 	else:
 		# 其它层（第 15 层第二波等）：按普通 BOSS 的金币给，每个家族一份
 		var gain2 := maxi(gold_per_boss_kill, 0)
 		RunState.add_gold(gain2)
 		_gold_gained += gain2
 		if debug_print:
-			print("[Battle] 紫色家族 %d 阵亡：不掉道具，金币 +%d（合计 %d）" % [
+			DebugLog.log_line("[Battle] 紫色家族 %d 阵亡：不掉道具，金币 +%d（合计 %d）" % [
 				family, gain2, RunState.gold])
 
 
@@ -1219,7 +1220,7 @@ func _start_purple_family_lock(family: int = 0) -> void:
 	_purple_lock_left_by_family[family] = PURPLE_LOCK_TIME
 	_purple_family_lock_used = true
 	_purple_family_lock_left = PURPLE_LOCK_TIME
-	print("[Battle] 紫 BOSS 共享血池到 50%%：全家锁血 %.0f 秒（移速 +%.0f%%）" % [
+	DebugLog.log_line("[Battle] 紫 BOSS 共享血池到 50%%：全家锁血 %.0f 秒（移速 +%.0f%%）" % [
 		PURPLE_LOCK_TIME, PURPLE_LOCK_SPEED_BONUS * 100.0])
 
 
@@ -1432,7 +1433,7 @@ func _update_purple_splits() -> void:
 		if body != null and body.has_method("spawn_clone_now"):
 			body.spawn_clone_now()
 			if debug_print:
-				print("[Battle] 紫色家族 %d 血条到 %.0f%%，加 1 个分身" % [
+				DebugLog.log_line("[Battle] 紫色家族 %d 血条到 %.0f%%，加 1 个分身" % [
 					family, PURPLE_SPLIT_THRESHOLDS[stage] * 100.0])
 
 
@@ -1508,7 +1509,7 @@ func _record_run_progress() -> void:
 		"max_health": player.max_health,
 	}
 	if debug_print:
-		print("[Battle] 离场写回: 生命 %d/%d 金币 %d 本关击杀 %d 用时 %.1f 秒" % [
+		DebugLog.log_line("[Battle] 离场写回: 生命 %d/%d 金币 %d 本关击杀 %d 用时 %.1f 秒" % [
 			RunState.current_health, RunState.max_health, RunState.gold,
 			round_kill_count, _get_round_elapsed_time()])
 
@@ -1544,19 +1545,19 @@ func _show_result_dialog(result_title: String, result_message: String) -> void:
 ## 说明: 结算弹窗会把 time_scale 设为 0，计时器全部冻结，所以这里不用延时，
 ##       直接在模拟击杀的同一帧验证流程（等价于玩家点确定）。
 func _debug_instant_win() -> void:
-	print("[Battle调试] 模拟胜利 目标=%s 层数=%d" % [String(goal.get("type", "?")), RunState.floor_index])
+	DebugLog.log_line("[Battle调试] 模拟胜利 目标=%s 层数=%d" % [String(goal.get("type", "?")), RunState.floor_index])
 	_last_result_won = true          # 真实路径里由 _check_game_result() 置位，这里手动补上
 	if not _boss_defeated:
 		_on_boss_defeated()
-	print("[Battle调试] 通关总结文本=%s" % _build_run_summary().replace("
+	DebugLog.log_line("[Battle调试] 通关总结文本=%s" % _build_run_summary().replace("
 ", " | "))
-	print("[Battle调试] 点确定前: 层数=%d 局进行中=%s 总击杀=%d 用时=%.1f" % [
+	DebugLog.log_line("[Battle调试] 点确定前: 层数=%d 局进行中=%s 总击杀=%d 用时=%.1f" % [
 		RunState.floor_index, str(RunState.is_active), RunState.total_kills, RunState.run_elapsed])
 	# 模拟玩家点确定（清掉暂停，避免后续场景切不过去）
 	Engine.time_scale = 1.0
 	get_tree().paused = false
 	_on_result_dialog_exit_requested()
-	print("[Battle调试] 点确定后: 层数=%d 局进行中=%s 已通关=%s 总击杀=%d" % [
+	DebugLog.log_line("[Battle调试] 点确定后: 层数=%d 局进行中=%s 已通关=%s 总击杀=%d" % [
 		RunState.floor_index, str(RunState.is_active), str(RunState.cleared), RunState.total_kills])
 
 
@@ -1681,7 +1682,7 @@ func _self_check() -> void:
 		for door in arena_data["doors"]:
 			door_distance = minf(door_distance, first_enemy.global_position.distance_to(
 				generator.spawn_world_position(door)))
-	print("[Battle自检] 场上敌人=%d Overlay(红门)格=%d 地面格=%d 波次=%d/%d 击杀=%d 目标达成=%s%s" % [
+	DebugLog.log_line("[Battle自检] 场上敌人=%d Overlay(红门)格=%d 地面格=%d 波次=%d/%d 击杀=%d 目标达成=%s%s" % [
 		alive, $OverlayTileMapLayer.get_used_cells().size(), $GroundTileMapLayer.get_used_cells().size(),
 		_waves_done, _waves.size(), round_kill_count,
 		str(LevelGoal.is_satisfied(goal, _goal_state())),
@@ -1689,10 +1690,10 @@ func _self_check() -> void:
 	var _hud_bar := $Player/HUDLayer/TimeBar as Sprite2D
 	var _hud_life := $Player/HUDLayer/LifeIcon as Sprite2D
 	var _hud_icon_time := $Player/HUDLayer/TimeIcon as Sprite2D
-	print("[Battle自检] HUD布局: 时钟可见=%s 条可见=%s 条X=%.0f 条色=%s 生命Y=%.0f" % [
+	DebugLog.log_line("[Battle自检] HUD布局: 时钟可见=%s 条可见=%s 条X=%.0f 条色=%s 生命Y=%.0f" % [
 		str(_hud_icon_time.visible), str(_hud_bar.visible), _hud_bar.position.x,
 		str(_hud_bar.modulate), _hud_life.position.y])
-	print("[Battle自检] HUD第一行=%s ， HUD第二行=%s" % [_goal_label.text, _detail_label.text])
+	DebugLog.log_line("[Battle自检] HUD第一行=%s ， HUD第二行=%s" % [_goal_label.text, _detail_label.text])
 
 # ---------------- 三重 BOSS（第 5 层 50/50 / 第 10 层 3 只 + 家族血条） ----------------
 
@@ -1739,19 +1740,19 @@ func _spawn_bosses_for_floor() -> void:
 		# 两只紫 BOSS 用同一个家族号：共用一个血池 = 一条血条（和拆家族之前的表现一致）
 		_spawn_purple_boss(1)
 		_spawn_purple_boss(1)
-		print("[Battle] 第 10 层：三重 BOSS（原 BOSS + 紫 BOSS x2）")
+		DebugLog.log_line("[Battle] 第 10 层：三重 BOSS（原 BOSS + 紫 BOSS x2）")
 		_spawn_final_floor_shooters(4)      # 开局再放 4 个持枪敌人（用户要求）
 	elif RunState.is_final_floor() or floor_now >= RunState.MAX_FLOOR:
 		# 第 15 层：交给波次系统（_update_boss_waves 里按三波依次放 BOSS）
-		print("[Battle] 第 %d 层：三波 BOSS 演出（普通 x2 -> 紫 x2 -> 岩浆 x2）" % floor_now)
+		DebugLog.log_line("[Battle] 第 %d 层：三波 BOSS 演出（普通 x2 -> 紫 x2 -> 岩浆 x2）" % floor_now)
 	else:
 		var rng := RandomNumberGenerator.new()
 		rng.seed = RunState.run_seed + floor_now * 7919   # 加入本局随机种子：每局都可能出紫 BOSS
 		if rng.randf() < 0.5:
-			print("[Battle] 第 %d 层 BOSS 抽到：原 BOSS" % floor_now)
+			DebugLog.log_line("[Battle] 第 %d 层 BOSS 抽到：原 BOSS" % floor_now)
 			_spawn_boss()
 		else:
-			print("[Battle] 第 %d 层 BOSS 抽到：紫色 BOSS" % floor_now)
+			DebugLog.log_line("[Battle] 第 %d 层 BOSS 抽到：紫色 BOSS" % floor_now)
 			_spawn_purple_boss(0)
 
 
@@ -1778,7 +1779,7 @@ func _spawn_final_floor_shooters(count: int) -> void:
 			shooter.died.connect(_on_enemy_died)
 		spawned += 1
 	if debug_print:
-		print("[Battle] 第 10 层开局放出 %d 个持枪敌人" % spawned)
+		DebugLog.log_line("[Battle] 第 10 层开局放出 %d 个持枪敌人" % spawned)
 
 
 ## 从刷怪池里取"持枪敌人"的配置（已按层数缩放血量）
@@ -1820,7 +1821,7 @@ func _spawn_purple_boss(family: int) -> void:
 	if purple.has_signal("clone_spawned"):
 		purple.clone_spawned.connect(_on_purple_clone_spawned)
 	if debug_print:
-		print("[Battle] 紫色 BOSS 已放出（家族 %d）出生格=%s 共用血条 %.0f/%.0f" % [
+		DebugLog.log_line("[Battle] 紫色 BOSS 已放出（家族 %d）出生格=%s 共用血条 %.0f/%.0f" % [
 			family, str(spawn_cell), _purple_shared_hp, _purple_shared_max])
 
 
@@ -1828,7 +1829,7 @@ func _spawn_purple_boss(family: int) -> void:
 func _on_purple_clone_spawned(clone: Node) -> void:
 	# 共用一份 HP：分身只是"多个可以被攻击的受体"，不给血条加血（用户要求）
 	if is_instance_valid(clone) and debug_print:
-		print("[Battle] 紫 BOSS 分身加入（共用血条仍为 %.0f/%.0f）" % [
+		DebugLog.log_line("[Battle] 紫 BOSS 分身加入（共用血条仍为 %.0f/%.0f）" % [
 			_purple_shared_hp, _purple_shared_max])
 
 
@@ -1841,7 +1842,7 @@ func _on_purple_boss_died() -> void:
 	RunState.add_gold(gain)
 	_gold_gained += gain
 	if debug_print:
-		print("[Battle] 紫色 BOSS 阵亡 金币 +%d（合计 %d）" % [gain, RunState.gold])
+		DebugLog.log_line("[Battle] 紫色 BOSS 阵亡 金币 +%d（合计 %d）" % [gain, RunState.gold])
 
 
 ## 场上所有 BOSS：原 BOSS + 紫色 BOSS 本体 + 紫色 BOSS 的分身
@@ -2058,7 +2059,7 @@ func _setup_push_rooms() -> void:
 		for state in _room_states:
 			if bool(state.get("locked", false)):
 				locked_count += 1
-		print("[Battle] 推车关房间 %d 个（上锁 %d 个）" % [_room_states.size(), locked_count])
+		DebugLog.log_line("[Battle] 推车关房间 %d 个（上锁 %d 个）" % [_room_states.size(), locked_count])
 
 
 ## 把每个房间和它的红门出怪点（Marker2D）对上号：门关着 → 这个出怪点不刷怪
@@ -2243,7 +2244,7 @@ func _on_temp_ally_died(ally) -> void:
 	var cell := arena_cell_at((ally as Node2D).global_position)
 	_spawn_shooter_enemy_at(cell)
 	if debug_print:
-		print("[Battle] 临时友方阵亡，位置 %s 生成持枪敌人" % str(cell))
+		DebugLog.log_line("[Battle] 临时友方阵亡，位置 %s 生成持枪敌人" % str(cell))
 
 
 func _spawn_shooter_enemy_at(cell: Vector2i) -> void:
@@ -2360,7 +2361,7 @@ func _recruit_temp_ally(index: int) -> void:
 	_recruited_allies.append(ally)
 	_sync_box_temp_allies()
 	if debug_print:
-		print("[Battle] 带走临时友方，当前 %d 名" % _recruited_allies.size())
+		DebugLog.log_line("[Battle] 带走临时友方，当前 %d 名" % _recruited_allies.size())
 
 
 ## 撤离时按"带走且仍然活着"的人数给金币
@@ -2517,7 +2518,7 @@ func _toggle_room(index: int) -> void:
 		_spawn_room_content(index)
 		_activate_room_enemies(index)
 	if debug_print:
-		print("[Battle] 房间%d %s（内容=%s）" % [
+		DebugLog.log_line("[Battle] 房间%d %s（内容=%s）" % [
 			index, "打开" if will_open else "关上", String(state["content"])])
 
 
@@ -2666,7 +2667,7 @@ func _apply_push_time_limit() -> void:
 	stage_duration = limit
 	stage_time_left = limit
 	if debug_print:
-		print("[Battle] 推车关限时 %.0f 秒（警戒线 %d 格）" % [limit, cells])
+		DebugLog.log_line("[Battle] 推车关限时 %.0f 秒（警戒线 %d 格）" % [limit, cells])
 
 
 ## 推车关：把箱子放到起点 3x3，沿警戒线走
@@ -2686,18 +2687,18 @@ func _spawn_push_box() -> void:
 	_push_box.status_changed.connect(_on_push_box_status_changed)
 	_push_arrived = false
 	if debug_print:
-		print("[Battle] 推车关: 警戒线 %d 格，箱子已在起点 %s" % [cells.size(), str(cells[0])])
+		DebugLog.log_line("[Battle] 推车关: 警戒线 %d 格，箱子已在起点 %s" % [cells.size(), str(cells[0])])
 
 
 func _on_push_box_arrived() -> void:
 	_push_arrived = true
 	if debug_print:
-		print("[Battle] 箱子抵达终点，目标达成")
+		DebugLog.log_line("[Battle] 箱子抵达终点，目标达成")
 
 
 func _on_push_box_status_changed(new_status: String) -> void:
 	if debug_print:
-		print("[Battle] 箱子状态 -> %s（进度 %d/%d）" % [
+		DebugLog.log_line("[Battle] 箱子状态 -> %s（进度 %d/%d）" % [
 			new_status, int(_push_box.moved_cells()), int(_push_box.total_cells())])
 
 
@@ -2724,7 +2725,7 @@ func _update_player_lava(delta: float) -> void:
 		return
 	_lava_stand_time = 0.0
 	if debug_print:
-		print("[Battle] 岩浆灼烧玩家 -%d 血量，剩余 %d/%d" % [
+		DebugLog.log_line("[Battle] 岩浆灼烧玩家 -%d 血量，剩余 %d/%d" % [
 			lava_damage, player.current_health, player.max_health])
 
 
@@ -2826,7 +2827,7 @@ func _setup_arena_bounds() -> void:
 	_add_bound_shape(body, Vector2(-thickness * 0.5, height * 0.5), Vector2(thickness, height + thickness * 2.0))
 	_add_bound_shape(body, Vector2(width + thickness * 0.5, height * 0.5), Vector2(thickness, height + thickness * 2.0))
 	if debug_print:
-		print("[Battle] 兜底空气墙已就位: 地图 %dx%d 格（%dx%d px）" % [int(arena_data["width"]), int(arena_data["height"]), int(width), int(height)])
+		DebugLog.log_line("[Battle] 兜底空气墙已就位: 地图 %dx%d 格（%dx%d px）" % [int(arena_data["width"]), int(arena_data["height"]), int(width), int(height)])
 
 
 func _add_bound_shape(body: StaticBody2D, center: Vector2, size: Vector2) -> void:
@@ -2871,7 +2872,7 @@ func _setup_maze() -> void:
 		_maze_exit_cells.append(cell)
 	_spawn_maze_exit_marker()
 	if debug_print:
-		print("[Battle] 迷宫关: 出口 %d 格，怪物待刷（等敌人配置就绪）" % _maze_exit_cells.size())
+		DebugLog.log_line("[Battle] 迷宫关: 出口 %d 格，怪物待刷（等敌人配置就绪）" % _maze_exit_cells.size())
 
 
 ## 真正把迷宫里的怪物摆出来。
@@ -2899,7 +2900,7 @@ func _spawn_maze_enemies() -> void:
 		enemy.died.connect(_on_enemy_died)
 		spawned += 1
 	if debug_print:
-		print("[Battle] 迷宫关: 摆出怪物 %d 只（可用配置 %d 种）" % [spawned, available_enemy_configs.size()])
+		DebugLog.log_line("[Battle] 迷宫关: 摆出怪物 %d 只（可用配置 %d 种）" % [spawned, available_enemy_configs.size()])
 
 
 ## 出口上放一个漂浮发光的箱子，玩家一眼就能认出出口在哪
@@ -2935,7 +2936,7 @@ func _update_maze(delta: float) -> void:
 		if _maze_exit_cells.has(player_cell):
 			_maze_exited = true
 			if debug_print:
-				print("[Battle] 走出迷宫，用时 %.1f 秒" % _maze_elapsed)
+				DebugLog.log_line("[Battle] 走出迷宫，用时 %.1f 秒" % _maze_elapsed)
 	if not _maze_guide_done and _maze_elapsed >= maze_guide_seconds:
 		_draw_maze_guide()
 		_maze_guide_done = true
@@ -3007,7 +3008,7 @@ func _draw_maze_guide() -> void:
 	_maze_lava_order = lava_list
 	_maze_lava_index = 0
 	if debug_print:
-		print("[Battle] 迷宫指引线 %d 格，待岩浆化 %d 格" % [_maze_guide_cells.size(), lava_list.size()])
+		DebugLog.log_line("[Battle] 迷宫指引线 %d 格，待岩浆化 %d 格" % [_maze_guide_cells.size(), lava_list.size()])
 
 
 ## 直接改地面图层的某个格子（实时画警戒线 / 铺岩浆）
@@ -3208,7 +3209,7 @@ func _set_build_mode(enabled: bool) -> void:
 		if _build_frame != null:
 			_build_frame.visible = false
 	if debug_print:
-		print("[Battle] 建造模式 %s" % ("开启" if enabled else "关闭"))
+		DebugLog.log_line("[Battle] 建造模式 %s" % ("开启" if enabled else "关闭"))
 
 
 ## 鼠标准星只在战斗画面上出现：暂停、结算、任何 UI 打开时都恢复系统指针
@@ -3551,7 +3552,7 @@ func _start_defend_level() -> void:
 	_spawn_initial_enemies()
 	_start_enemy_spawn_timer()
 	if debug_print:
-		print("[Battle] 守护关正式开始：倒计时 %.0f 秒" % stage_duration)
+		DebugLog.log_line("[Battle] 守护关正式开始：倒计时 %.0f 秒" % stage_duration)
 
 
 ## 找一个能站人的格子：优先自己，不行就在周围 5 格内找最近的地板格
@@ -3735,25 +3736,25 @@ func _update_boss_waves(delta: float) -> void:
 	_boss_wave_pending = true
 	_boss_wave_gap_left = boss_wave_gap_seconds
 	if debug_print:
-		print("[Battle] 第 %d 波结束，%.0f 秒后第 %d 波" % [_boss_wave, boss_wave_gap_seconds, _boss_wave + 1])
+		DebugLog.log_line("[Battle] 第 %d 波结束，%.0f 秒后第 %d 波" % [_boss_wave, boss_wave_gap_seconds, _boss_wave + 1])
 
 
 func _start_boss_wave(wave: int) -> void:
 	_boss_wave = wave
 	match wave:
 		1:
-			print("[Battle] 第 15 层 第 1 波：两只普通 BOSS")
+			DebugLog.log_line("[Battle] 第 15 层 第 1 波：两只普通 BOSS")
 			_spawn_boss()
 			_spawn_boss()
 			_spawn_final_floor_shooters(4)
 		2:
-			print("[Battle] 第 15 层 第 2 波：四只紫 BOSS（家族 0 x2 + 家族 1 x2，两条血条）")
+			DebugLog.log_line("[Battle] 第 15 层 第 2 波：四只紫 BOSS（家族 0 x2 + 家族 1 x2，两条血条）")
 			_spawn_purple_boss(0)
 			_spawn_purple_boss(0)
 			_spawn_purple_boss(1)
 			_spawn_purple_boss(1)
 		_:
-			print("[Battle] 第 15 层 第 3 波：两只岩浆 BOSS")
+			DebugLog.log_line("[Battle] 第 15 层 第 3 波：两只岩浆 BOSS")
 			_spawn_lava_boss(0)
 			_spawn_lava_boss(1)
 
@@ -3778,7 +3779,7 @@ func _spawn_lava_boss(index: int) -> void:
 		boss.died.connect(_on_enemy_died)
 	_boss_nodes.append(boss)
 	if debug_print:
-		print("[Battle] 岩浆 BOSS #%d 已放出：血量 %d，位置 %s" % [index, config.max_health, str(spawn_cell)])
+		DebugLog.log_line("[Battle] 岩浆 BOSS #%d 已放出：血量 %d，位置 %s" % [index, config.max_health, str(spawn_cell)])
 
 
 ## 从岩浆里爬出来的自爆兵：血量和移速各提升 50%
@@ -3829,7 +3830,7 @@ func _clear_field_without_reward() -> void:
 		enemy.current_health = 0
 		enemy.queue_free()
 	if debug_print:
-		print("[Battle] 波次切换：清掉场上杂兵（不给金币、不计击杀）")
+		DebugLog.log_line("[Battle] 波次切换：清掉场上杂兵（不给金币、不计击杀）")
 
 
 # ============================ 多条 BOSS 血条（有几个 BOSS 就有几条） ============================
@@ -3861,7 +3862,7 @@ func _ensure_boss_bars(count: int) -> void:
 		bar.modulate = time_bar.modulate
 		bar.z_index = time_bar.z_index
 		if debug_print:
-			print("[Battle] 新建 BOSS 血条 #%d（位置 %s）" % [row_index, str(bar.position)])
+			DebugLog.log_line("[Battle] 新建 BOSS 血条 #%d（位置 %s）" % [row_index, str(bar.position)])
 		var hud := $Player/HUDLayer as Node2D
 		var marker: ColorRect = null
 		var label: Label = null
