@@ -1,6 +1,0 @@
-v0.9.2：调试日志开关 + F1 经典模式入口 + 清理脚本警告
-
-- 新增 DebugLog autoload：116 处 print 改为按开关输出，默认静默；游戏内指令或 --log 启动参数开启
-- F1 调试关卡里新增「经典模式」入口（标题页仍不显示）
-- 战场开场自检改为只在调试构建里运行（发布版不再做统计）
-- 修掉三个场景里 IPix.ttf 的失效 UID，以及 SHADOWED_VARIABLE / INTEGER_DIVISION / UNUSED_PARAMETER 警告
